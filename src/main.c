@@ -779,7 +779,7 @@ main(int argc, char* argv[])
     } data [] = {
         {(void*)vertexes,   18 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,  VK_NULL_HANDLE, VK_NULL_HANDLE},
         {(void*)indexes,     3 * sizeof(int),   VK_BUFFER_USAGE_INDEX_BUFFER_BIT,   VK_NULL_HANDLE, VK_NULL_HANDLE},
-        {(void*)matrixes,   38 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_NULL_HANDLE, VK_NULL_HANDLE},
+        {(void*)matrixes,   48 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_NULL_HANDLE, VK_NULL_HANDLE},
     };
 
     for (int i = 0; i < 3; i++) {

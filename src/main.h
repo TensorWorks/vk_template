@@ -6,3 +6,8 @@ PFN_vkDestroySwapchainKHR   vkDestroySwapchain;
 PFN_vkGetSwapchainImagesKHR vkGetSwapchainImages;
 PFN_vkAcquireNextImageKHR   vkAcquireNextImage;
 PFN_vkQueuePresentKHR       vkQueuePresent;
+
+typedef struct GlobalStorage_ {
+    VulkanContext vulkan;
+    CImgui cimgui;
+} GlobalStorage;

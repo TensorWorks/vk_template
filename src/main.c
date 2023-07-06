@@ -2,10 +2,11 @@
 #define GLFW_INCLUDE_VULKAN
 #include "GLFW/glfw3.h"
 
-/*#include <vulkan/vk_enum_string_helper.h>
- * FIXME Need to use validation layers for this, should only be in debug builds anyway
- * TODO Investigate validation layers in general, they will surely be needed eventually.
- * TODO CreateInfo objects should be able to have a restricted lifetime */
+#define CIMGUI_DEFINE_ENUMS_AND_STRUCTS 1
+#define CIMGUI_NO_EXPORT 1
+#include "cimgui.h"
+
+/*#include <vulkan/vk_enum_string_helper.h> */
 char*
 string_VkResult(VkResult r)
 {
@@ -17,8 +18,14 @@ string_VkResult(VkResult r)
 #include <stdlib.h>
 #include <string.h>
 
+/* Forward Declarations */
+typedef struct GlobalStorage_ GlobalStorage;
+
 /* Core Layer */
+#include "ext.h"
 #include "main.h"
+
+#include "ext.c"
 
 /* TODO Make configurable */
 const int width = 1280;
@@ -31,6 +38,9 @@ const int fragShaderSpvSize = 500;
 int
 main(int argc, char* argv[])
 {
+    GlobalStorage* g = malloc(sizeof(GlobalStorage));
+    memset(g, 0, sizeof(*g));
+
     /*
      * 41-step vulkan initialization based on https://github.com/jbendtsen/stuff/blob/master/triangle.c
      * 1) Create GLFW Window
@@ -125,8 +135,7 @@ main(int argc, char* argv[])
     }
 
     gpuCount = 1;
-    VkPhysicalDevice gpu = {0};
-    vk_result = vkEnumeratePhysicalDevices(instance, &gpuCount, &gpu);
+    vk_result = vkEnumeratePhysicalDevices(instance, &gpuCount, &g->vulkan.gpu);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkEnumeratePhysicalDevices() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -137,14 +146,14 @@ main(int argc, char* argv[])
      * 5) Pick a queue family
      */
     int queueCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queueCount, 0);
+    vkGetPhysicalDeviceQueueFamilyProperties(g->vulkan.gpu, &queueCount, 0);
     if (queueCount <= 0) {
         fprintf(stderr, "No Queue families found\n");
         return 5;
     }
 
     VkQueueFamilyProperties *qfp = malloc(queueCount * sizeof(VkQueueFamilyProperties));
-    vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queueCount, qfp);
+    vkGetPhysicalDeviceQueueFamilyProperties(g->vulkan.gpu, &queueCount, qfp);
 
     int queueIndex = -1;
     for (int i = 0; i < queueCount; i++) {
@@ -163,7 +172,7 @@ main(int argc, char* argv[])
     /*
      * 6) Check that the chosen queue family supports presentation
      */
-    if (!glfwGetPhysicalDevicePresentationSupport(instance, gpu, queueIndex)) {
+    if (!glfwGetPhysicalDevicePresentationSupport(instance, g->vulkan.gpu, queueIndex)) {
         fprintf(stderr, "The selected queue family does not support present mode\n");
         return 6;
     }
@@ -172,7 +181,7 @@ main(int argc, char* argv[])
      * 7) Get all the Vulkan _device_ extensions (as opposed to instance extensions)
      */
     unsigned int deviceExtensionCount = 0;
-    vk_result = vkEnumerateDeviceExtensionProperties(gpu, 0, &deviceExtensionCount, 0);
+    vk_result = vkEnumerateDeviceExtensionProperties(g->vulkan.gpu, 0, &deviceExtensionCount, 0);
     if (deviceExtensionCount <= 0 || vk_result != VK_SUCCESS) {
         fprintf(stderr, "Could not find any Vulkan device extensions [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -180,7 +189,7 @@ main(int argc, char* argv[])
     }
 
     VkExtensionProperties* deviceExtensionProperties = calloc(deviceExtensionCount, sizeof(VkExtensionProperties));
-    vk_result = vkEnumerateDeviceExtensionProperties(gpu, 0, &deviceExtensionCount, deviceExtensionProperties);
+    vk_result = vkEnumerateDeviceExtensionProperties(g->vulkan.gpu, 0, &deviceExtensionCount, deviceExtensionProperties);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkEnumerateDeviceExtensionProperties() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -209,8 +218,7 @@ main(int argc, char* argv[])
     deviceCreateInfo.enabledExtensionCount = deviceExtensionCount;
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
 
-    VkDevice device = {0};
-    vk_result = vkCreateDevice(gpu, &deviceCreateInfo, 0, &device);
+    vk_result = vkCreateDevice(g->vulkan.gpu, &deviceCreateInfo, 0, &g->vulkan.device);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateDevice() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -266,7 +274,7 @@ main(int argc, char* argv[])
      */
 
     int colorFormatCount = 0;
-    vk_result = vkGetPhysicalDeviceSurfaceFormats(gpu, surface, &colorFormatCount, 0);
+    vk_result = vkGetPhysicalDeviceSurfaceFormats(g->vulkan.gpu, surface, &colorFormatCount, 0);
     if (colorFormatCount <= 0 || vk_result != VK_SUCCESS) {
         fprintf(stderr, "Could not find any color formats for the window surface, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -274,7 +282,7 @@ main(int argc, char* argv[])
     }
 
     VkSurfaceFormatKHR* colors = malloc(colorFormatCount * sizeof(VkSurfaceFormatKHR));
-    vk_result = vkGetPhysicalDeviceSurfaceFormats(gpu, surface, &colorFormatCount, colors);
+    vk_result = vkGetPhysicalDeviceSurfaceFormats(g->vulkan.gpu, surface, &colorFormatCount, colors);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkGetPhysicalDeviceSurfaceFormats() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -300,7 +308,7 @@ main(int argc, char* argv[])
      */
 
     VkSurfaceCapabilitiesKHR surfaceCapabilities;
-    vk_result = vkGetPhysicalDeviceSurfaceCapabilities(gpu, surface, &surfaceCapabilities);
+    vk_result = vkGetPhysicalDeviceSurfaceCapabilities(g->vulkan.gpu, surface, &surfaceCapabilities);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkGetPhysicalDeviceSurfaceCapabilities() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -366,7 +374,7 @@ main(int argc, char* argv[])
     swapchainCreateInfo.compositeAlpha = alphaFormat;
 
     VkSwapchainKHR swapchain;
-    vk_result = vkCreateSwapchain(device, &swapchainCreateInfo, 0, &swapchain);
+    vk_result = vkCreateSwapchain(g->vulkan.device, &swapchainCreateInfo, 0, &swapchain);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateSwapchain() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -378,14 +386,14 @@ main(int argc, char* argv[])
      */
 
     int imageCount = 0;
-    vk_result = vkGetSwapchainImagesKHR(device, swapchain, &imageCount, 0);
+    vk_result = vkGetSwapchainImagesKHR(g->vulkan.device, swapchain, &imageCount, 0);
     if (imageCount <= 0 || vk_result != VK_SUCCESS) {
             fprintf(stderr, "Could not find any swapchain images\n");
             return 15;
     }
 
     VkImage* images = calloc(imageCount, sizeof(VkImage));
-    vk_result = vkGetSwapchainImagesKHR(device, swapchain, &imageCount, images);
+    vk_result = vkGetSwapchainImagesKHR(g->vulkan.device, swapchain, &imageCount, images);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkGetSwapchainImages() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -417,7 +425,7 @@ main(int argc, char* argv[])
     VkImageView* imageViews = calloc(imageCount, sizeof(VkImageView));
     for (int i = 0; i < imageCount; i++) {
         imageViewCreateInfo.image = images[i];
-        vk_result = vkCreateImageView(device, &imageViewCreateInfo, 0, &imageViews[i]);
+        vk_result = vkCreateImageView(g->vulkan.device, &imageViewCreateInfo, 0, &imageViews[i]);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkCreateImageView() num %i failed, result code [%i]: %s\n",
                     i, vk_result, string_VkResult(vk_result));
@@ -434,8 +442,7 @@ main(int argc, char* argv[])
     commandPoolCreateInfo.queueFamilyIndex = queueIndex;
     commandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
-    VkCommandPool commandPool;
-    vk_result = vkCreateCommandPool(device, &commandPoolCreateInfo, 0, &commandPool);
+    vk_result = vkCreateCommandPool(g->vulkan.device, &commandPoolCreateInfo, 0, &g->vulkan.pool);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateCommandPool() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -448,12 +455,12 @@ main(int argc, char* argv[])
 
     VkCommandBufferAllocateInfo commandBufferAllocateInfo = {0};
     commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    commandBufferAllocateInfo.commandPool = commandPool;
+    commandBufferAllocateInfo.commandPool = g->vulkan.pool;
     commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     commandBufferAllocateInfo.commandBufferCount = imageCount;
 
     VkCommandBuffer* commandBuffers = calloc(imageCount, sizeof(VkCommandBuffer));
-    vk_result = vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, commandBuffers);
+    vk_result = vkAllocateCommandBuffers(g->vulkan.device, &commandBufferAllocateInfo, commandBuffers);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkAllocateCommandBuffers() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -475,7 +482,7 @@ main(int argc, char* argv[])
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     for (int i = 0; i < sizeof(formats) / sizeof(VkFormat); i++) {
         VkFormatProperties props;
-        vkGetPhysicalDeviceFormatProperties(gpu, formats[i], &props);
+        vkGetPhysicalDeviceFormatProperties(g->vulkan.gpu, formats[i], &props);
         if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
             depthFormat = formats[i];
             break;
@@ -507,7 +514,7 @@ main(int argc, char* argv[])
     depthStencilImageCreateInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
     VkImage depthImage;
-    vk_result = vkCreateImage(device, &depthStencilImageCreateInfo, 0, &depthImage);
+    vk_result = vkCreateImage(g->vulkan.device, &depthStencilImageCreateInfo, 0, &depthImage);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateImage() failed for depth-stencil image, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -518,21 +525,14 @@ main(int argc, char* argv[])
      * 21) Allocate memory for the depth stencil
      */
 
-    VkPhysicalDeviceMemoryProperties gpuMemoryProperties;
-    vkGetPhysicalDeviceMemoryProperties(gpu, &gpuMemoryProperties);
+    vkGetPhysicalDeviceMemoryProperties(g->vulkan.gpu, &g->vulkan.memProps);
 
     VkMemoryRequirements depthMemoryRequirements;
-    vkGetImageMemoryRequirements(device, depthImage, &depthMemoryRequirements);
+    vkGetImageMemoryRequirements(g->vulkan.device, depthImage, &depthMemoryRequirements);
 
-    int memoryTypeIndex = -1;
-    for (int i = 0; i < gpuMemoryProperties.memoryTypeCount; i++) {
-        if ((depthMemoryRequirements.memoryTypeBits & (1 << i))
-            && (gpuMemoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
-        {
-            memoryTypeIndex = i;
-            break;
-        }
-    }
+    int memoryTypeIndex = ext_vkFindMemoryType(&g->vulkan.memProps,
+                                                depthMemoryRequirements.memoryTypeBits,
+                                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     if (memoryTypeIndex < 0) {
         fprintf(stderr, "Could not find suitable graphics memory\n");
@@ -545,7 +545,7 @@ main(int argc, char* argv[])
     allocInfo.memoryTypeIndex = memoryTypeIndex;
 
     VkDeviceMemory depthMemory;
-    vk_result = vkAllocateMemory(device, &allocInfo, 0, &depthMemory);
+    vk_result = vkAllocateMemory(g->vulkan.device, &allocInfo, 0, &depthMemory);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkAllocateMemory() failed for depth-stencil image, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -556,7 +556,7 @@ main(int argc, char* argv[])
      * 22) Bind the newly allocated memroy to the depth stencil image
      */
 
-    vk_result = vkBindImageMemory(device, depthImage, depthMemory, 0);
+    vk_result = vkBindImageMemory(g->vulkan.device, depthImage, depthMemory, 0);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkBindImageMemory() failed for depth-stencil image, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -583,7 +583,7 @@ main(int argc, char* argv[])
     depthViewCreateInfo.subresourceRange.aspectMask = depthAspect;
 
     VkImageView depthView;
-    vk_result = vkCreateImageView(device, &depthViewCreateInfo, 0, &depthView);
+    vk_result = vkCreateImageView(g->vulkan.device, &depthViewCreateInfo, 0, &depthView);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateImageView() failed for depth-stencil image, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -664,7 +664,7 @@ main(int argc, char* argv[])
     renderpassCreateInfo.pDependencies = subpassDependencies;
 
     VkRenderPass renderpass;
-    vk_result = vkCreateRenderPass(device, &renderpassCreateInfo, 0, &renderpass);
+    vk_result = vkCreateRenderPass(g->vulkan.device, &renderpassCreateInfo, 0, &renderpass);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateRenderPass() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -690,7 +690,7 @@ main(int argc, char* argv[])
     VkFramebuffer* framebuffers = calloc(imageCount, sizeof(VkFramebuffer));
     for (int i = 0; i < imageCount; i++) {
         framebufferViews[0] = imageViews[i];
-        vk_result = vkCreateFramebuffer(device, &framebufferCreateInfo, 0, &framebuffers[i]);
+        vk_result = vkCreateFramebuffer(g->vulkan.device, &framebufferCreateInfo, 0, &framebuffers[i]);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkCreateFramebuffer() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
@@ -706,7 +706,7 @@ main(int argc, char* argv[])
     semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
     VkSemaphore semaPresent;
-    vk_result = vkCreateSemaphore(device, &semaphoreCreateInfo, 0, &semaPresent);
+    vk_result = vkCreateSemaphore(g->vulkan.device, &semaphoreCreateInfo, 0, &semaPresent);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateSemaphore() failed for presentation semaphore, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -714,7 +714,7 @@ main(int argc, char* argv[])
     }
 
     VkSemaphore semaRender;
-    vk_result = vkCreateSemaphore(device, &semaphoreCreateInfo, 0, &semaRender);
+    vk_result = vkCreateSemaphore(g->vulkan.device, &semaphoreCreateInfo, 0, &semaRender);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateSemaphore() failed for rendering semaphore, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -731,7 +731,7 @@ main(int argc, char* argv[])
 
     VkFence* fences = calloc(imageCount, sizeof(VkFence));
     for (int i = 0; i < imageCount; i++) {
-        vk_result = vkCreateFence(device, &fenceCreateInfo, 0, &fences[i]);
+        vk_result = vkCreateFence(g->vulkan.device, &fenceCreateInfo, 0, &fences[i]);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkCreateFence() failed for fence no. %i, result code [%i]: %s\n",
                     i, vk_result, string_VkResult(vk_result));
@@ -783,63 +783,11 @@ main(int argc, char* argv[])
     };
 
     for (int i = 0; i < 3; i++) {
-        VkBufferCreateInfo bufferCreateInfo = {0};
-        bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferCreateInfo.size = data[i].size;
-        bufferCreateInfo.usage = data[i].usage;
-
-        vk_result = vkCreateBuffer(device, &bufferCreateInfo, 0, &data[i].buffer);
+        vk_result = ext_vkCreateBuffer(&g->vulkan, data[i].bytes, data[i].size, data[i].usage,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                &data[i].buffer, &data[i].memory);
         if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateBuffer() no. %i failed, result code [%i]: %s\n",
-                    i, vk_result, string_VkResult(vk_result));
-            return 28;
-        }
-
-        VkMemoryRequirements bufferMemoryRequirements;
-        vkGetBufferMemoryRequirements(device, data[i].buffer, &bufferMemoryRequirements);
-
-        unsigned int flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        int typeIndex = -1;
-        for (int j = 0; j < gpuMemoryProperties.memoryTypeCount; j++) {
-            if (bufferMemoryRequirements.memoryTypeBits & (1 << j)
-                && (gpuMemoryProperties.memoryTypes[j].propertyFlags & flags) == flags)
-            {
-                typeIndex = j;
-                break;
-            }
-        }
-
-        if (typeIndex < 0) {
-            fprintf(stderr, "Could not find an appropriate memory type\n");
-            return 28;
-        }
-
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = bufferMemoryRequirements.size;
-        allocInfo.memoryTypeIndex = typeIndex;
-
-        vk_result = vkAllocateMemory(device, &allocInfo, 0, &data[i].memory);
-        if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkAllocateMemory() failed, result code [%i]: %s\n",
-                    vk_result, string_VkResult(vk_result));
-            return 28;
-        }
-
-        void* buffer;
-        vk_result = vkMapMemory(device, data[i].memory, 0, allocInfo.allocationSize, 0, &buffer);
-        if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkMapMemory() no. %i failed, result code [%i]: %s\n",
-                    i, vk_result, string_VkResult(vk_result));
-            return 28;
-        }
-
-        memcpy(buffer, data[i].bytes, data[i].size);
-        vkUnmapMemory(device, data[i].memory);
-
-        vk_result = vkBindBufferMemory(device, data[i].buffer, data[i].memory, 0);
-        if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkBindBufferMemory() no. %i failed, result code [%i]: %s\n",
-                    i, vk_result, string_VkResult(vk_result));
+            fprintf(stderr, "Binding for Data buffer no. %i failed\n", i);
             return 28;
         }
     }
@@ -868,7 +816,7 @@ main(int argc, char* argv[])
     descriptorSetLayoutCreateInfo.pBindings = &descriptorSetLayoutBinding;
 
     VkDescriptorSetLayout descriptorSetLayout;
-    vk_result = vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout);
+    vk_result = vkCreateDescriptorSetLayout(g->vulkan.device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateDescriptorSetLayout() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -885,7 +833,7 @@ main(int argc, char* argv[])
     pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
 
     VkPipelineLayout pipelineLayout;
-    vk_result = vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, 0, &pipelineLayout);
+    vk_result = vkCreatePipelineLayout(g->vulkan.device, &pipelineLayoutCreateInfo, 0, &pipelineLayout);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreatePipelineLayout() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -903,7 +851,7 @@ main(int argc, char* argv[])
     VkShaderModule vertShader;
     shaderCreateInfo.codeSize = vertShaderSpvSize;
     shaderCreateInfo.pCode = (unsigned int *)vertShaderSpv;
-    vk_result = vkCreateShaderModule(device, &shaderCreateInfo, 0, &vertShader);
+    vk_result = vkCreateShaderModule(g->vulkan.device, &shaderCreateInfo, 0, &vertShader);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateShaderModule() failed for vertex shader, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -913,7 +861,7 @@ main(int argc, char* argv[])
     VkShaderModule fragShader;
     shaderCreateInfo.codeSize = fragShaderSpvSize;
     shaderCreateInfo.pCode = (unsigned int *)fragShaderSpv;
-    vk_result = vkCreateShaderModule(device, &shaderCreateInfo, 0, &fragShader);
+    vk_result = vkCreateShaderModule(g->vulkan.device, &shaderCreateInfo, 0, &fragShader);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateShaderModule() failed for fragment shader, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -1031,7 +979,7 @@ main(int argc, char* argv[])
     /* Note: Without validation layers this will fail with Error Unknown
      * if you give it uninitialized shaders */
     VkPipeline pipeline;
-    vk_result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1 , &pipeInfo, 0, &pipeline);
+    vk_result = vkCreateGraphicsPipelines(g->vulkan.device, VK_NULL_HANDLE, 1 , &pipeInfo, 0, &pipeline);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateGraphicsPipelines() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -1041,8 +989,8 @@ main(int argc, char* argv[])
     /*
      * 34) Destroy shader modules (not needed anymore)
      */
-    vkDestroyShaderModule(device, vertShader, 0);
-    vkDestroyShaderModule(device, fragShader, 0);
+    vkDestroyShaderModule(g->vulkan.device, vertShader, 0);
+    vkDestroyShaderModule(g->vulkan.device, fragShader, 0);
 
     /*
      * 35) Create a descriptor pool for the descriptor set
@@ -1058,7 +1006,7 @@ main(int argc, char* argv[])
     poolCreateInfo.maxSets = 1;
 
     VkDescriptorPool descriptorPool;
-    vk_result = vkCreateDescriptorPool(device, &poolCreateInfo, 0, &descriptorPool);
+    vk_result = vkCreateDescriptorPool(g->vulkan.device, &poolCreateInfo, 0, &descriptorPool);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateDescriptorPool() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -1075,7 +1023,7 @@ main(int argc, char* argv[])
     descriptorAlloc.pSetLayouts = &descriptorSetLayout;
 
     VkDescriptorSet descriptorSet;
-    vk_result = vkAllocateDescriptorSets(device, &descriptorAlloc, &descriptorSet);
+    vk_result = vkAllocateDescriptorSets(g->vulkan.device, &descriptorAlloc, &descriptorSet);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkAllocateDescriptorSets() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -1093,7 +1041,7 @@ main(int argc, char* argv[])
     writeInfo.pBufferInfo = &uniformInfo;
     writeInfo.dstBinding = 0;
 
-    vkUpdateDescriptorSets(device, 1, &writeInfo, 0, 0);
+    vkUpdateDescriptorSets(g->vulkan.device, 1, &writeInfo, 0, 0);
 
     /*
      * 38) Construct the command buffers
@@ -1163,6 +1111,14 @@ main(int argc, char* argv[])
     }
 
     /*
+     * 38a) All other initialization happens here
+     */
+    int result = ext_init(g);
+    if (result != 0) {
+        return 38;
+    }
+
+    /*
      * 39) Prepare Main Loop
      */
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -1183,8 +1139,7 @@ main(int argc, char* argv[])
     presentInfo.pWaitSemaphores = &semaRender;
     presentInfo.waitSemaphoreCount = 1;
 
-    VkQueue queue;
-    vkGetDeviceQueue(device, queueIndex, 0, &queue);
+    vkGetDeviceQueue(g->vulkan.device, queueIndex, 0, &g->vulkan.queue);
 
     /*
      * 40) Main Loop
@@ -1195,21 +1150,21 @@ main(int argc, char* argv[])
         glfwPollEvents();
         int index;
 
-        vk_result = vkAcquireNextImage(device, swapchain, max64, semaPresent, 0, &index);
+        vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkAcquireNextImage() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
             return 40;
         }
 
-        vk_result = vkWaitForFences(device, 1, &fences[index], VK_TRUE, max64);
+        vk_result = vkWaitForFences(g->vulkan.device, 1, &fences[index], VK_TRUE, max64);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkWaitForFences() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
             return 40;
         }
 
-        vk_result = vkResetFences(device, 1, &fences[index]);
+        vk_result = vkResetFences(g->vulkan.device, 1, &fences[index]);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkResetFences() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
@@ -1217,7 +1172,7 @@ main(int argc, char* argv[])
         }
 
         submitInfo.pCommandBuffers = &commandBuffers[index];
-        vk_result = vkQueueSubmit(queue, 1, &submitInfo, fences[index]);
+        vk_result = vkQueueSubmit(g->vulkan.queue, 1, &submitInfo, fences[index]);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkQueueSubmit() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
@@ -1225,7 +1180,7 @@ main(int argc, char* argv[])
         }
 
         presentInfo.pImageIndices = &index;
-        vk_result = vkQueuePresent(queue, &presentInfo);
+        vk_result = vkQueuePresent(g->vulkan.queue, &presentInfo);
         if (vk_result != VK_SUCCESS && vk_result != VK_SUBOPTIMAL_KHR) {
             fprintf(stderr, "vkQueuePresent() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
@@ -1238,44 +1193,47 @@ main(int argc, char* argv[])
      * Reminder: Most OSes will automatically do all of this the moment you quit. In all desktop situations
      * this is only necessary for conserving resources over the lifetime of the program, not its end.
      */
+
+    ext_destroy(g);
+
     for (int i = 0; i < 3; i++) {
-        vkDestroyBuffer(device, data[i].buffer, 0);
-        vkFreeMemory(device, data[i].memory, 0);
+        vkDestroyBuffer(g->vulkan.device, data[i].buffer, 0);
+        vkFreeMemory(g->vulkan.device, data[i].memory, 0);
     }
 
-    vkDestroyImageView(device, depthView, 0);
-    vkDestroyImage(device, depthImage, 0);
-    vkFreeMemory(device, depthMemory, 0);
+    vkDestroyImageView(g->vulkan.device, depthView, 0);
+    vkDestroyImage(g->vulkan.device, depthImage, 0);
+    vkFreeMemory(g->vulkan.device, depthMemory, 0);
 
-    vkDestroySemaphore(device, semaPresent, 0);
-    vkDestroySemaphore(device, semaRender, 0);
+    vkDestroySemaphore(g->vulkan.device, semaPresent, 0);
+    vkDestroySemaphore(g->vulkan.device, semaRender, 0);
 
     for (int i = 0; i < imageCount; i++)
-        vkDestroyFence(device, fences[i], 0);
+        vkDestroyFence(g->vulkan.device, fences[i], 0);
     free(fences);
 
     for (int i = 0; i < imageCount; i++)
-        vkDestroyFramebuffer(device, framebuffers[i], 0);
+        vkDestroyFramebuffer(g->vulkan.device, framebuffers[i], 0);
     free(framebuffers);
 
-    vkDestroyCommandPool(device, commandPool, 0);
+    vkDestroyCommandPool(g->vulkan.device, g->vulkan.pool, 0);
     free(commandBuffers);
 
-    vkDestroyDescriptorPool(device, descriptorPool, 0);
-    vkDestroyDescriptorSetLayout(device, descriptorSetLayout, 0);
+    vkDestroyDescriptorPool(g->vulkan.device, descriptorPool, 0);
+    vkDestroyDescriptorSetLayout(g->vulkan.device, descriptorSetLayout, 0);
 
-    vkDestroyPipelineLayout(device, pipelineLayout, 0);
-    vkDestroyPipeline(device, pipeline, 0);
-    vkDestroyRenderPass(device, renderpass, 0);
+    vkDestroyPipelineLayout(g->vulkan.device, pipelineLayout, 0);
+    vkDestroyPipeline(g->vulkan.device, pipeline, 0);
+    vkDestroyRenderPass(g->vulkan.device, renderpass, 0);
 
     for (int i = 0; i < imageCount; i++)
-        vkDestroyImageView(device, imageViews[i], 0);
+        vkDestroyImageView(g->vulkan.device, imageViews[i], 0);
     free(imageViews);
 
     free(images);
 
-    vkDestroySwapchain(device, swapchain, 0);
-    vkDestroyDevice(device, 0);
+    vkDestroySwapchain(g->vulkan.device, swapchain, 0);
+    vkDestroyDevice(g->vulkan.device, 0);
 
     vkDestroySurfaceKHR(instance, surface, 0);
     vkDestroyInstance(instance, 0);

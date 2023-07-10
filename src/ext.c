@@ -261,7 +261,14 @@ ext_init(GlobalStorage* g)
         return 2;
     }
 
-    io->Fonts->TexID = g->cimgui.fontTexture;
+    io->Fonts->TexID = &g->cimgui.fontTexture;
+
+    /* TODO Backend draw, submitting commands to central pool/queue?
+     * In any case, this requires a function for processing the commands and will in all likelihood
+     * require significantly modifying the pipeline to do so.
+     * Resources:
+     * Continue through https://vulkan-tutorial.com/ for one perspective
+     * Look at the example vulkan backends in the DearImgui (not CImgui) for how they do it. */
 
     return 0;
 }
@@ -480,22 +487,22 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
     }
 
     /* Actual image object */
-    VkImageCreateInfo info = {0};
-    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    info.imageType = VK_IMAGE_TYPE_2D;
-    info.format = VK_FORMAT_R8G8B8A8_UINT;
-    info.extent.width = width;
-    info.extent.height = height;
-    info.extent.depth = 1;
-    info.mipLevels = 1;
-    info.arrayLayers = 1;
-    info.samples = VK_SAMPLE_COUNT_1_BIT;
-    info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageCreateInfo imageInfo = {0};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UINT;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    res = vkCreateImage(vulkan->device, &info, 0, &texture->image);
+    res = vkCreateImage(vulkan->device, &imageInfo, 0, &texture->image);
     if (res != VK_SUCCESS) {
         fprintf(stderr, "vkCreateImage() failed for texture, result code [%i]: %s\n",
                 res, string_VkResult(res));
@@ -531,7 +538,7 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
         return res;
     }
 
-    res = ext_vkImageLayout(vulkan, texture->image, VK_FORMAT_R8G8B8A8_UINT,
+    res = ext_vkImageLayout(vulkan, texture->image, imageInfo.format,
                       VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     if (res != VK_SUCCESS)
         return res;
@@ -545,12 +552,27 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
 
     vkDestroyBuffer(vulkan->device, buffer, 0);
     vkFreeMemory(vulkan->device, memory, 0);
+
+    VkImageViewCreateInfo viewInfo = {0};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = texture->image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = imageInfo.format;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
+    res = vkCreateImageView(vulkan->device, &viewInfo, 0, &texture->view);
+    if (res != VK_SUCCESS)
+        fprintf(stderr, "Failed to create image view for texture\n");
+        return res;
+
     return VK_SUCCESS;
 }
 
 static void
 ext_vkDestroyTexture(VulkanContext* vulkan, VulkanTexture* texture)
 {
+    vkDestroyImageView(vulkan->device, texture->view, 0);
     vkDestroyImage(vulkan->device, texture->image, 0);
     vkFreeMemory(vulkan->device, texture->memory, 0);
 }

@@ -12,7 +12,6 @@ typedef struct VulkanTexture
     VkImage                 image;
     VkDeviceMemory          memory;
     VkImageView             view;
-    VkSampler               sampler;
 
     VkDescriptorSet         desc;
     VkDeviceSize            size;
@@ -26,7 +25,11 @@ typedef struct VulkanContext_
     VkQueue             queue;
     VkCommandPool       pool;
 
+    VkSampler           nearestSampler;
+    VkSampler           linearSampler;
+
     VkPhysicalDeviceMemoryProperties    memProps;
+    VkPhysicalDeviceProperties          devProps;
     VkPhysicalDevice                    gpu;
 } VulkanContext;
 

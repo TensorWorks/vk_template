@@ -91,7 +91,7 @@ main(int argc, char* argv[])
         return 3;
     }
 
-    printf("Validation layers detected:\n");
+    printf("Detected Validation Layers:\n");
     for (int i = 0; i < instanceLayerCount; i++) {
         printf("\t%s\n", instanceLayers[i].layerName);
     }
@@ -126,7 +126,7 @@ main(int argc, char* argv[])
      * 4) Get list of GPUs and pick one
      */
 
-    int gpuCount = 0;
+    uint32_t gpuCount = 0;
     vk_result = vkEnumeratePhysicalDevices(instance, &gpuCount, 0);
     if (gpuCount <= 0) {
         fprintf(stderr, "No graphics hardware found, physical device count = %i\n"
@@ -134,13 +134,50 @@ main(int argc, char* argv[])
         return 4;
     }
 
-    gpuCount = 1;
-    vk_result = vkEnumeratePhysicalDevices(instance, &gpuCount, &g->vulkan.gpu);
+    VkPhysicalDevice* gpus = malloc(gpuCount * sizeof(VkPhysicalDevice));
+    vk_result = vkEnumeratePhysicalDevices(instance, &gpuCount, gpus);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkEnumeratePhysicalDevices() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
         return 4;
     }
+
+    /*
+     * 4a) Select a gpu with anisotropic filtering
+     */
+
+    printf("Detected Physical Devices:\n");
+    g->vulkan.gpu = VK_NULL_HANDLE;
+    for (uint32_t i = 0; i < gpuCount; i++) {
+        VkPhysicalDeviceProperties devProps;
+
+        vkGetPhysicalDeviceProperties(gpus[i], &devProps);
+
+        printf("\t%s", devProps.deviceName);
+        if (g->vulkan.gpu == VK_NULL_HANDLE) {
+            VkPhysicalDeviceFeatures features;
+
+            vkGetPhysicalDeviceFeatures(gpus[i], &features);
+
+            /* Just pick the first one with anisotropic filtering support for now
+             * TODO Move queue and extension checks to here, turn checks into a function.
+             * Can also give devices a "score" for how many features they have and pick the best. */
+
+            if (features.samplerAnisotropy == VK_TRUE) {
+                g->vulkan.gpu = gpus[i];
+                g->vulkan.devProps = devProps;
+                printf(" <--- SELECTED");
+            }
+        }
+        printf("\n");
+    }
+    if (g->vulkan.gpu == VK_NULL_HANDLE) {
+        fprintf(stderr, "No GPU found with anisotropic filtering support\n");
+        return 4;
+    }
+
+    free(gpus);
+    gpus = 0;
 
     /*
      * 5) Pick a queue family
@@ -211,12 +248,16 @@ main(int argc, char* argv[])
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
 
+    VkPhysicalDeviceFeatures features = {0};
+    features.samplerAnisotropy = VK_TRUE;
+
     VkDeviceCreateInfo deviceCreateInfo = {0};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.queueCreateInfoCount = 1;
     deviceCreateInfo.pQueueCreateInfos = &queueInfo;
     deviceCreateInfo.enabledExtensionCount = deviceExtensionCount;
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
+    deviceCreateInfo.pEnabledFeatures = &features;
 
     vk_result = vkCreateDevice(g->vulkan.gpu, &deviceCreateInfo, 0, &g->vulkan.device);
     if (vk_result != VK_SUCCESS) {
@@ -1134,12 +1175,45 @@ main(int argc, char* argv[])
     vkGetDeviceQueue(g->vulkan.device, queueIndex, 0, &g->vulkan.queue);
 
     /*
-     * 39a) All other initialization happens here
+     * 39a) Global samplers
      */
+
+    VkSamplerCreateInfo samplerInfo = {0};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    samplerInfo.maxAnisotropy = g->vulkan.devProps.limits.maxSamplerAnisotropy;
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    vk_result = vkCreateSampler(g->vulkan.device, &samplerInfo, 0, &g->vulkan.linearSampler);
+    if (vk_result != VK_SUCCESS) {
+        fprintf(stderr, "Failed to create non-filtered image sampler, result code [%i]: %s\n",
+                    vk_result, string_VkResult(vk_result));
+        return 39;
+    }
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    vk_result = vkCreateSampler(g->vulkan.device, &samplerInfo, 0, &g->vulkan.nearestSampler);
+    if (vk_result != VK_SUCCESS) {
+        fprintf(stderr, "Failed to create non-filtered image sampler, result code [%i]: %s\n",
+                    vk_result, string_VkResult(vk_result));
+        return 39;
+    }
+
+    /*
+     * 39b) All other initialization happens here
+     */
+
     int result = ext_init(g);
     if (result != 0) {
         fprintf(stderr, "ext_init() failed, result code %i\n", result);
-        return 38;
+        return 39;
     }
 
     /*
@@ -1196,6 +1270,9 @@ main(int argc, char* argv[])
      */
 
     ext_destroy(g);
+
+    vkDestroySampler(g->vulkan.device, g->vulkan.nearestSampler, 0);
+    vkDestroySampler(g->vulkan.device, g->vulkan.linearSampler, 0);
 
     for (int i = 0; i < 3; i++) {
         vkDestroyBuffer(g->vulkan.device, data[i].buffer, 0);

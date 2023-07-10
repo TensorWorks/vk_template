@@ -1,74 +1,3 @@
-static int
-ext_vkFindMemoryType(VkPhysicalDeviceMemoryProperties* gpuMemoryProperties,
-                     uint32_t memoryTypeBits,
-                     VkMemoryPropertyFlags properties)
-{
-    for (int i = 0; i < gpuMemoryProperties->memoryTypeCount; i++) {
-        if (memoryTypeBits & (1 << i)
-            && (gpuMemoryProperties->memoryTypes[i].propertyFlags & properties) == properties)
-        {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-static VkResult
-ext_vkCreateBuffer(VulkanContext* vulkan, void* data, VkDeviceSize size, VkBufferUsageFlags usage,
-                    VkMemoryPropertyFlags properties, VkBuffer* buffer, VkDeviceMemory* memory)
-{
-    VkResult res;
-
-    VkBufferCreateInfo createInfo = {0};
-    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    createInfo.size = size;
-    createInfo.usage = usage;
-    createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    res = vkCreateBuffer(vulkan->device, &createInfo, 0, buffer);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "vkCreateBuffer(), result code [%i]: %s\n", res, string_VkResult(res));
-        return res;
-    }
-
-    VkMemoryRequirements reqs = {0};
-    vkGetBufferMemoryRequirements(vulkan->device, *buffer, &reqs);
-
-    int memoryTypeIndex = ext_vkFindMemoryType(&vulkan->memProps, reqs.memoryTypeBits, properties);
-    if (memoryTypeIndex < 0) {
-        fprintf(stderr, "Could not find an appropriate memory type\n");
-        return VK_ERROR_UNKNOWN;
-    }
-
-    VkMemoryAllocateInfo allocInfo = {0};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = reqs.size;
-    allocInfo.memoryTypeIndex = memoryTypeIndex;
-
-    res = vkAllocateMemory(vulkan->device, &allocInfo, 0, memory);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "vkAllocateMemory() failed, result code [%i]: %s\n", res, string_VkResult(res));
-        return res;
-    }
-
-    void* mapping;
-    res = vkMapMemory(vulkan->device, *memory, 0, size, 0, &mapping);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "vkMapMemory() failed, result code [%i]: %s\n", res, string_VkResult(res));
-        return res;
-    }
-
-    memcpy(mapping, data, size);
-    vkUnmapMemory(vulkan->device, *memory);
-    res = vkBindBufferMemory(vulkan->device, *buffer, *memory, 0);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "vkBindBufferMemory() failed, result code [%i]: %s\n", res, string_VkResult(res));
-        return res;
-    }
-
-    return res;
-}
 
 static int
 ext_init(GlobalStorage* g)
@@ -326,92 +255,13 @@ ext_init(GlobalStorage* g)
     int width, height;
     ImFontAtlas_AddFontDefault(io->Fonts, 0);
     ImFontAtlas_GetTexDataAsRGBA32(io->Fonts, &pixels, &width, &height, 0);
-    g->cimgui.fontTexture.width = width;
-    g->cimgui.fontTexture.height = height;
-    g->cimgui.fontTexture.size = width * height * 4;
 
-    VkResult res;
-    VkBuffer buffer;
-    VkDeviceMemory memory;
-    res = ext_vkCreateBuffer(&g->vulkan, pixels, g->cimgui.fontTexture.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            &buffer, &memory);
+    VkResult res = ext_vkCreateTexture(&g->vulkan, &g->cimgui.fontTexture, pixels, width, height);
     if (res != VK_SUCCESS) {
         return 2;
     }
 
-    /* Actual image object */
-    VkImageCreateInfo info = {0};
-    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    info.imageType = VK_IMAGE_TYPE_2D;
-    info.format = VK_FORMAT_R8G8B8A8_UINT; /* TODO Might need to be VK_FORMAT_R32G32B32A32_SFLOAT */
-    info.extent.width = width;
-    info.extent.height = height;
-    info.extent.depth = 1;
-    info.mipLevels = 1;
-    info.arrayLayers = 1;
-    info.samples = VK_SAMPLE_COUNT_1_BIT;
-    info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    res = vkCreateImage(g->vulkan.device, &info, 0, &g->cimgui.fontTexture.image);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "vkCreateImage() failed for cimgui font texture, result code [%i]: %s\n",
-                res, string_VkResult(res));
-        return 3;
-    }
-
-    VkMemoryRequirements reqs;
-    vkGetImageMemoryRequirements(g->vulkan.device, g->cimgui.fontTexture.image, &reqs);
-
-    int imageMemType = ext_vkFindMemoryType(&g->vulkan.memProps, reqs.memoryTypeBits,
-                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (imageMemType < 0) {
-        fprintf(stderr, "Could not find an appropriate memory type for cimgui font texture\n");
-        return 4;
-    }
-
-    VkMemoryAllocateInfo allocInfo = {0};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = reqs.size;
-    allocInfo.memoryTypeIndex = imageMemType;
-
-    res = vkAllocateMemory(g->vulkan.device, &allocInfo, 0, &g->cimgui.fontTexture.memory);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "vkAllocateMemory() failed for cimgui font texture, result code [%i]: %s\n",
-                res, string_VkResult(res));
-        return 5;
-    }
-
-    res = vkBindImageMemory(g->vulkan.device, g->cimgui.fontTexture.image, g->cimgui.fontTexture.memory, 0);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "vkBindImageMemory() failed for cimgui font texture, result code [%i]: %s\n",
-                res, string_VkResult(res));
-        return 5;
-    }
-
-    VkCommandBuffer cmd = ext_vkQuickBufferBegin(&g->vulkan);
-
-    VkBufferImageCopy region = {0};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent.width = width;
-    region.imageExtent.height = height;
-    region.imageExtent.depth = 1;
-    /* TODO Set Vulkan Image handle as font texture
-     * - Have to copy the uploaded pixel data into the image using a command buffer */
-
-    ext_vkQuickBufferEnd(&g->vulkan, cmd);
+    io->Fonts->TexID = g->cimgui.fontTexture;
 
     return 0;
 }
@@ -419,6 +269,7 @@ ext_init(GlobalStorage* g)
 static void
 ext_destroy(GlobalStorage* g)
 {
+    ext_vkDestroyTexture(&g->vulkan, &g->cimgui.fontTexture);
     glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_Arrow]);
     glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_TextInput]);
     glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_Hand]);
@@ -433,8 +284,80 @@ ext_destroy(GlobalStorage* g)
  * Vulkan
  */
 
+static int
+ext_vkFindMemoryType(VkPhysicalDeviceMemoryProperties* gpuMemoryProperties,
+                     uint32_t memoryTypeBits,
+                     VkMemoryPropertyFlags properties)
+{
+    for (int i = 0; i < gpuMemoryProperties->memoryTypeCount; i++) {
+        if (memoryTypeBits & (1 << i)
+            && (gpuMemoryProperties->memoryTypes[i].propertyFlags & properties) == properties)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static VkResult
+ext_vkCreateBuffer(VulkanContext* vulkan, void* data, VkDeviceSize size, VkBufferUsageFlags usage,
+                    VkMemoryPropertyFlags properties, VkBuffer* buffer, VkDeviceMemory* memory)
+{
+    VkResult res;
+
+    VkBufferCreateInfo createInfo = {0};
+    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    createInfo.size = size;
+    createInfo.usage = usage;
+    createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    res = vkCreateBuffer(vulkan->device, &createInfo, 0, buffer);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "vkCreateBuffer(), result code [%i]: %s\n", res, string_VkResult(res));
+        return res;
+    }
+
+    VkMemoryRequirements reqs = {0};
+    vkGetBufferMemoryRequirements(vulkan->device, *buffer, &reqs);
+
+    int memoryTypeIndex = ext_vkFindMemoryType(&vulkan->memProps, reqs.memoryTypeBits, properties);
+    if (memoryTypeIndex < 0) {
+        fprintf(stderr, "Could not find an appropriate memory type\n");
+        return VK_ERROR_UNKNOWN;
+    }
+
+    VkMemoryAllocateInfo allocInfo = {0};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = reqs.size;
+    allocInfo.memoryTypeIndex = memoryTypeIndex;
+
+    res = vkAllocateMemory(vulkan->device, &allocInfo, 0, memory);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "vkAllocateMemory() failed, result code [%i]: %s\n", res, string_VkResult(res));
+        return res;
+    }
+
+    void* mapping;
+    res = vkMapMemory(vulkan->device, *memory, 0, size, 0, &mapping);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "vkMapMemory() failed, result code [%i]: %s\n", res, string_VkResult(res));
+        return res;
+    }
+
+    memcpy(mapping, data, size);
+    vkUnmapMemory(vulkan->device, *memory);
+    res = vkBindBufferMemory(vulkan->device, *buffer, *memory, 0);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "vkBindBufferMemory() failed, result code [%i]: %s\n", res, string_VkResult(res));
+        return res;
+    }
+
+    return res;
+}
+
 static VkCommandBuffer
-ext_vkQuickBufferBegin(VulkanContext* vulkan)
+ext_vkQuickCommandBegin(VulkanContext* vulkan)
 {
     VkCommandBufferAllocateInfo allocInfo = {0};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -445,7 +368,7 @@ ext_vkQuickBufferBegin(VulkanContext* vulkan)
     VkCommandBuffer buffer;
     vkAllocateCommandBuffers(vulkan->device, &allocInfo, &buffer);
 
-    vkCommandBufferBeginInfo beginInfo = {0};
+    VkCommandBufferBeginInfo beginInfo = {0};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(buffer, &beginInfo);
@@ -454,7 +377,7 @@ ext_vkQuickBufferBegin(VulkanContext* vulkan)
 }
 
 static void
-ext_vkQuickBufferEnd(VulkanContext* vulkan, VkCommandBuffer buffer)
+ext_vkQuickCommandEnd(VulkanContext* vulkan, VkCommandBuffer buffer)
 {
     vkEndCommandBuffer(buffer);
 
@@ -467,11 +390,11 @@ ext_vkQuickBufferEnd(VulkanContext* vulkan, VkCommandBuffer buffer)
     vkFreeCommandBuffers(vulkan->device, vulkan->pool, 1, &buffer);
 }
 
-static void
+static VkResult
 ext_vkImageLayout(VulkanContext* vulkan, VkImage image, VkFormat format,
                     VkImageLayout oldLayout, VkImageLayout newLayout)
 {
-    VkCommandBuffer cmd = ext_vkQuickBufferBegin(vulkan);
+    VkCommandBuffer cmd = ext_vkQuickCommandBegin(vulkan);
 
     VkImageMemoryBarrier barrier = {0};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -480,28 +403,156 @@ ext_vkImageLayout(VulkanContext* vulkan, VkImage image, VkFormat format,
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = image;
-    barrier.subresourcerange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourcerange.baseMipLevel = 1;
-    barrier.subresourcerange.levelCount = 1;
-    barrier.subresourcerange.baseArrayLayer = 0;
-    barrier.subresourcerange.layerCount = 1;
-    barrier.srcAccessMask = 0; /* TODO */
-    barrier.dstAccessMask = 0; /* TODO */
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags srcStage, dstStage;
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+        && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+    {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+               && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+
+    } else {
+        fprintf(stderr, "vkImageLayout() unsupported (or unimplemented) layout change, %i to %i\n",
+                oldLayout, newLayout);
+        return VK_ERROR_UNKNOWN;
+    }
 
     vkCmdPipelineBarrier(
         cmd,
-        0, /* TODO */,
-        0, /* TODO */,
-        0,
-        0,
-        0,
-        0,
-        0,
-        1,
-        &barrier
+        srcStage, dstStage, /* Pipeline stages, before/after */
+        0, /* Region-specific operation bit */
+        0, 0, /* Memory Barrier */
+        0, 0, /* Buffer Barrier */
+        1, &barrier /* Image Barrier */
     );
 
-    ext_vkQuickBufferEnd(vulkan, cmd);
+    ext_vkQuickCommandEnd(vulkan, cmd);
+    return VK_SUCCESS;
+}
+
+static void
+ext_vkCopyBufferToImage(VulkanContext* vulkan, VkBuffer from, VkImage to, uint32_t width, uint32_t height)
+{
+    VkCommandBuffer cmd = ext_vkQuickCommandBegin(vulkan);
+
+    VkBufferImageCopy region = {0};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent.width = width;
+    region.imageExtent.height = height;
+    region.imageExtent.depth = 1;
+
+    vkCmdCopyBufferToImage(cmd, from, to, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    ext_vkQuickCommandEnd(vulkan, cmd);
+}
+
+static VkResult
+ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
+                    uint8_t* pixels, uint32_t width, uint32_t height)
+{
+    texture->width  = width;
+    texture->height = height;
+    texture->size   = width * height * 4;
+
+    VkResult res;
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    res = ext_vkCreateBuffer(vulkan, pixels, texture->size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            &buffer, &memory);
+    if (res != VK_SUCCESS) {
+        return res;
+    }
+
+    /* Actual image object */
+    VkImageCreateInfo info = {0};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = VK_FORMAT_R8G8B8A8_UINT;
+    info.extent.width = width;
+    info.extent.height = height;
+    info.extent.depth = 1;
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    res = vkCreateImage(vulkan->device, &info, 0, &texture->image);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "vkCreateImage() failed for texture, result code [%i]: %s\n",
+                res, string_VkResult(res));
+        return res;
+    }
+
+    VkMemoryRequirements reqs;
+    vkGetImageMemoryRequirements(vulkan->device, texture->image, &reqs);
+
+    int imageMemType = ext_vkFindMemoryType(&vulkan->memProps, reqs.memoryTypeBits,
+                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (imageMemType < 0) {
+        fprintf(stderr, "Could not find an appropriate memory type for texture\n");
+        return VK_ERROR_UNKNOWN;
+    }
+
+    VkMemoryAllocateInfo allocInfo = {0};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = reqs.size;
+    allocInfo.memoryTypeIndex = imageMemType;
+
+    res = vkAllocateMemory(vulkan->device, &allocInfo, 0, &texture->memory);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "vkAllocateMemory() failed for texture, result code [%i]: %s\n",
+                res, string_VkResult(res));
+        return res;
+    }
+
+    res = vkBindImageMemory(vulkan->device, texture->image, texture->memory, 0);
+    if (res != VK_SUCCESS) {
+        fprintf(stderr, "vkBindImageMemory() failed for texture, result code [%i]: %s\n",
+                res, string_VkResult(res));
+        return res;
+    }
+
+    res = ext_vkImageLayout(vulkan, texture->image, VK_FORMAT_R8G8B8A8_UINT,
+                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    if (res != VK_SUCCESS)
+        return res;
+
+    ext_vkCopyBufferToImage(vulkan, buffer, texture->image, width, height);
+
+    res = ext_vkImageLayout(vulkan, texture->image, VK_FORMAT_R8G8B8A8_UINT,
+                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (res != VK_SUCCESS)
+        return res;
+
+    vkDestroyBuffer(vulkan->device, buffer, 0);
+    vkFreeMemory(vulkan->device, memory, 0);
+    return VK_SUCCESS;
+}
+
+static void
+ext_vkDestroyTexture(VulkanContext* vulkan, VulkanTexture* texture)
+{
+    vkDestroyImage(vulkan->device, texture->image, 0);
+    vkFreeMemory(vulkan->device, texture->memory, 0);
 }
 
 /*

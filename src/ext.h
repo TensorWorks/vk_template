@@ -3,6 +3,8 @@ static void ext_destroy(GlobalStorage* g);
 
 /*
  * Vulkan
+ * Enable validation by setting the following environment variable:
+ *  export VK_LOADER_LAYERS_ENABLE=*api_dump,*validation
  */
 
 typedef struct VulkanTexture
@@ -10,8 +12,9 @@ typedef struct VulkanTexture
     VkImage                 image;
     VkDeviceMemory          memory;
     VkImageView             view;
-    VkDescriptorSet         desc;
     VkSampler               sampler;
+
+    VkDescriptorSet         desc;
     VkDeviceSize            size;
     uint32_t                width;
     uint32_t                height;
@@ -41,19 +44,37 @@ static VkResult ext_vkCreateBuffer(
         VkBuffer* out_buffer,
         VkDeviceMemory* out_memory
 );
-static VkCommandBuffer ext_vkQuickBufferBegin(
+static VkCommandBuffer ext_vkQuickCommandBegin(
         VulkanContext* vulkan
 );
-static void ext_vkQuickBufferEnd(
+static void ext_vkQuickCommandEnd(
         VulkanContext* vulkan,
         VkCommandBuffer buffer
 );
-static void ext_vkImageLayout(
+static VkResult ext_vkImageLayout(
         VulkanContext* vulkan,
         VkImage image,
         VkFormat format,
         VkImageLayout oldLayout,
         VkImageLayout newLayout
+);
+static void ext_vkCopyBufferToImage(
+        VulkanContext* vulkan,
+        VkBuffer from,
+        VkImage to,
+        uint32_t width,
+        uint32_t height
+);
+static VkResult ext_vkCreateTexture(
+        VulkanContext* vulkan,
+        VulkanTexture* texture,
+        uint8_t* pixels,
+        uint32_t width,
+        uint32_t height
+);
+static void ext_vkDestroyTexture(
+        VulkanContext* vulkan,
+        VulkanTexture* texture
 );
 
 /*

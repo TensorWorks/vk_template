@@ -106,7 +106,7 @@ main(int argc, char* argv[])
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo instanceCreateInfo = {0};
     instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -1111,14 +1111,6 @@ main(int argc, char* argv[])
     }
 
     /*
-     * 38a) All other initialization happens here
-     */
-    int result = ext_init(g);
-    if (result != 0) {
-        return 38;
-    }
-
-    /*
      * 39) Prepare Main Loop
      */
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -1140,6 +1132,15 @@ main(int argc, char* argv[])
     presentInfo.waitSemaphoreCount = 1;
 
     vkGetDeviceQueue(g->vulkan.device, queueIndex, 0, &g->vulkan.queue);
+
+    /*
+     * 39a) All other initialization happens here
+     */
+    int result = ext_init(g);
+    if (result != 0) {
+        fprintf(stderr, "ext_init() failed, result code %i\n", result);
+        return 38;
+    }
 
     /*
      * 40) Main Loop

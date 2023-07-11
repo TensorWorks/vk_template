@@ -873,8 +873,7 @@ main(int argc, char* argv[])
     pipelineLayoutCreateInfo.setLayoutCount = 1;
     pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
 
-    VkPipelineLayout pipelineLayout;
-    vk_result = vkCreatePipelineLayout(g->vulkan.device, &pipelineLayoutCreateInfo, 0, &pipelineLayout);
+    vk_result = vkCreatePipelineLayout(g->vulkan.device, &pipelineLayoutCreateInfo, 0, &g->vulkan.layout);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreatePipelineLayout() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -1004,7 +1003,7 @@ main(int argc, char* argv[])
 
     VkGraphicsPipelineCreateInfo pipeInfo = {0};
     pipeInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipeInfo.layout = pipelineLayout;
+    pipeInfo.layout = g->vulkan.layout;
     pipeInfo.stageCount = 2;
     pipeInfo.pStages = shaderStages;
     pipeInfo.pVertexInputState = &vertInfo;
@@ -1132,7 +1131,7 @@ main(int argc, char* argv[])
         vkCmdSetScissor(commandBuffers[i], 0, 1, scissor);
 
         vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+                                g->vulkan.layout, 0, 1, &descriptorSet, 0, 0);
         vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
         VkDeviceSize offset = 0;
@@ -1300,7 +1299,7 @@ main(int argc, char* argv[])
     vkDestroyDescriptorPool(g->vulkan.device, descriptorPool, 0);
     vkDestroyDescriptorSetLayout(g->vulkan.device, descriptorSetLayout, 0);
 
-    vkDestroyPipelineLayout(g->vulkan.device, pipelineLayout, 0);
+    vkDestroyPipelineLayout(g->vulkan.device, g->vulkan.layout, 0);
     vkDestroyPipeline(g->vulkan.device, pipeline, 0);
     vkDestroyRenderPass(g->vulkan.device, renderpass, 0);
 

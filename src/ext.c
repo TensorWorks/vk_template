@@ -1,3 +1,11 @@
+uint32_t cimgui_vertShaderSpv[];
+uint32_t cimgui_fragShaderSpv[];
+
+#ifdef GLFW_RESIZE_NESW_CURSOR
+    #define GLFW_HAS_NEW_CURSORS (GLFW_VERSION_MAJOR * 1000 + GLFW_VERSION_MINOR * 100 + GLFW_VERSION_REVISION >= 3400)
+#else
+    #define GLFW_HAS_NEW_CURSORS (0)
+#endif
 
 static int
 ext_init(GlobalStorage* g)
@@ -12,10 +20,12 @@ ext_init(GlobalStorage* g)
 
     io->BackendPlatformName = "custom_impl_vulkan_cimgui";
     io->BackendRendererName = "custom_impl_vulkan_cimgui";
+    io->BackendRendererUserData = g; /* Need access to both vulkan and cimgui */
     io->BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
     io->SetClipboardTextFn = ext_cimguiSetClipboard;
     io->GetClipboardTextFn = ext_cimguiGetClipboard;
     io->ClipboardUserData = 0;
+    /* TODO Cursor position callback */
 
     /*
      * Cursor mapping
@@ -24,12 +34,20 @@ ext_init(GlobalStorage* g)
     g->cimgui.cursorMap[ImGuiMouseCursor_Arrow]       = glfwCreateStandardCursor(GLFW_ARROW_CURSOR);
     g->cimgui.cursorMap[ImGuiMouseCursor_TextInput]   = glfwCreateStandardCursor(GLFW_IBEAM_CURSOR);
     g->cimgui.cursorMap[ImGuiMouseCursor_Hand]        = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
-    g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll]   = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
     g->cimgui.cursorMap[ImGuiMouseCursor_ResizeEW]    = glfwCreateStandardCursor(GLFW_HRESIZE_CURSOR);
-    g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNESW]  = g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll];
     g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNS]    = glfwCreateStandardCursor(GLFW_VRESIZE_CURSOR);
-    g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNWSE]  = g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll];
-    g->cimgui.cursorMap[ImGuiMouseCursor_NotAllowed]  = g->cimgui.cursorMap[ImGuiMouseCursor_Arrow];
+
+    #if GLFW_HAS_NEW_CURSORS
+        g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll]   = glfwCreateStandardCursor(GLFW_RESIZE_ALL_CURSOR);
+        g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNESW]  = glfwCreateStandardCursor(GLFW_RESIZE_NESW_CURSOR);
+        g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNWSE]  = glfwCreateStandardCursor(GLFW_RESIZE_NWSE_CURSOR);
+        g->cimgui.cursorMap[ImGuiMouseCursor_NotAllowed]  = glfwCreateStandardCursor(GLFW_NOT_ALLOWED_CURSOR);
+    #else
+        g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll]   = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
+        g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNESW]  = g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll];
+        g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNWSE]  = g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll];
+        g->cimgui.cursorMap[ImGuiMouseCursor_NotAllowed]  = g->cimgui.cursorMap[ImGuiMouseCursor_Arrow];
+    #endif
 
     /*
      * Key mapping
@@ -247,9 +265,7 @@ ext_init(GlobalStorage* g)
     g->cimgui.imguiKey[103] = ImGuiKey_KeypadEnter;
     g->cimgui.imguiKey[104] = ImGuiKey_KeypadEqual;
 
-    /*
-     * Font
-     */
+    /* Font */
 
     unsigned char* pixels = 0;
     int width, height;
@@ -260,15 +276,136 @@ ext_init(GlobalStorage* g)
     if (res != VK_SUCCESS) {
         return 2;
     }
-
     io->Fonts->TexID = &g->cimgui.fontTexture;
 
-    /* TODO Backend draw, submitting commands to central pool/queue?
-     * In any case, this requires a function for processing the commands and will in all likelihood
-     * require significantly modifying the pipeline to do so.
-     * Resources:
-     * Continue through https://vulkan-tutorial.com/ for one perspective
-     * Look at the example vulkan backends in the DearImgui (not CImgui) for how they do it. */
+    /* Shaders */
+
+    VkShaderModule vertShader, fragShader;
+
+    VkShaderModuleCreateInfo shaderInfo = {0};
+    shaderInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shaderInfo.codeSize = sizeof(cimgui_vertShaderSpv);
+    shaderInfo.pCode = cimgui_vertShaderSpv;
+    vk_result = vkCreateShaderModule(g->vulkan.device, &shaderInfo, 0, &vertShader);
+    if (vk_result != VK_SUCCESS) {
+        fprintf(stderr, "vkCreateShaderModule() failed for imgui vertex shader, result code [%i]: %s\n",
+                vk_result, string_VkResult(vk_result));
+        return 3;
+    }
+
+    shaderInfo.codeSize = sizeof(cimgui_fragShaderSpv);
+    shaderInfo.pCode = cimgui_fragShaderSpv;
+    vk_result = vkCreateShaderModule(g->vulkan.device, &shaderInfo, 0, &fragShader);
+    if (vk_result != VK_SUCCESS) {
+        fprintf(stderr, "vkCreateShaderModule() failed for imgui fragment shader, result code [%i]: %s\n",
+                vk_result, string_VkResult(vk_result));
+        return 4;
+    }
+
+    /* TODO Pipeline */
+    VkPipelineShaderStageCreateInfo shaderStage[2] = {0};
+    shaderStage[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStage[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStage[0].module = vertShader;
+    shaderStage[0].pName = "main";
+    shaderStage[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStage[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStage[1].module = fragShader;
+    shaderStage[1].pName = "main";
+
+    VkVertexInputBindingDescription binding = {0};
+    binding.stride = sizeof(ImDrawVert);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attributes[3] = {0};
+    attributes[0].location = 0;
+    attributes[0].binding = binding.binding;
+    attributes[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attributes[0].offset = offsetof(ImDrawVert, pos);
+    attributes[1].location = 1;
+    attributes[1].binding = binding.binding;
+    attributes[1].format = VK_FORMAT_R32G32_SFLOAT;
+    attributes[1].offset = offsetof(ImDrawVert, uv);
+    attributes[2].location = 2;
+    attributes[2].binding = binding.binding;
+    attributes[2].format = VK_FORMAT_R8G8B8A8_UNORM;
+    attributes[2].offset = offsetof(ImDrawVert, col);
+
+    VkPipelineVertexInputStateCreateInfo vertexInfo = {0};
+    vertexInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInfo.vertexBindingDescriptionCount = 1;
+    vertexInfo.pVertexBindingDescriptions = &binding;
+    vertexInfo.vertexAttributeDescriptionCount = 3;
+    vertexInfo.pVertexAttributeDescriptions = attributes;
+
+    VkPipelineInputAssemblyStateCreateInfo assembly = {0};
+    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewport = {0};
+    viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport.viewportCount = 1;
+    viewport.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster = {0};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo msaa = {0};
+    msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState color = {0};
+    color.blendEnable = VK_TRUE;
+    color.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    color.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    color.colorBlendOp = VK_BLEND_OP_ADD;
+    color.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    color.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    color.alphaBlendOp = VK_BLEND_OP_ADD;
+    color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
+                         | VK_COLOR_COMPONENT_G_BIT
+                         | VK_COLOR_COMPONENT_B_BIT
+                         | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depth = {0};
+    depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+
+    VkPipelineColorBlendStateCreateInfo blend = {0};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &color;
+
+    VkDynamicStates dynamicStates[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamics = {0};
+    dynamics.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamics.dynamicStateCount = sizeof(dynamicStates) / sizeof(*dynamicStates);
+    dynamics.pDynamicStates = dynamicStates;
+
+    VkGraphicsPipelineCreateInfo createInfo = {0};
+    createInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    createInfo.stageCount = 2;
+    createInfo.pStages = shaderStage;
+    createInfo.pVertexInputState = &vertexInfo;
+    createInfo.pInputAssemblyState = &assembly;
+    createInfo.pViewportState = &viewport;
+    createInfo.pRasterizationState = &raster;
+    createInfo.pMultisampleState = &msaa;
+    createInfo.pDepthStencilState = &depth;
+    createInfo.pColorBlendState = &blend;
+    createInfo.pDynamicState = &dynamics;
+    /* TODO Do we need a custom layout? */
+    createInfo.layout = g->vulkan.layout;
+    /* TODO Need custom renderpass */
+    /* TODO Do we also need custom semaphores? */
+
+    /* Cleanup */
+
+    vkDestroyShaderModule(vertShader);
+    vkDestroyShaderModule(fragShader);
 
     return 0;
 }
@@ -283,6 +420,12 @@ ext_destroy(GlobalStorage* g)
     glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_ResizeAll]);
     glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_ResizeEW]);
     glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNS]);
+
+    #if GLFW_HAS_NEW_CURSORS
+        glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNESW]);
+        glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNWSE]);
+        glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_NotAllowed]);
+    #endif
 
     igDestroyContext(g->cimgui.context);
 }
@@ -490,7 +633,7 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
     VkImageCreateInfo imageInfo = {0};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_UINT;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1;
@@ -545,7 +688,7 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
 
     ext_vkCopyBufferToImage(vulkan, buffer, texture->image, width, height);
 
-    res = ext_vkImageLayout(vulkan, texture->image, VK_FORMAT_R8G8B8A8_UINT,
+    res = ext_vkImageLayout(vulkan, texture->image, imageInfo.format,
                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (res != VK_SUCCESS)
         return res;
@@ -595,4 +738,111 @@ ext_cimguiSetClipboard(void* context, const char* text)
     /* TODO */
     printf("Warning, %s not yet implemented", __func__);
 }
+
+/* Shades sourced from imgui/backends/imgui_impl_vulkan.cpp */
+
+// glsl_shader.vert, compiled with:
+// # glslangValidator -V -x -o glsl_shader.vert.u32 glsl_shader.vert
+/*
+#version 450 core
+layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec2 aUV;
+layout(location = 2) in vec4 aColor;
+layout(push_constant) uniform uPushConstant { vec2 uScale; vec2 uTranslate; } pc;
+
+out gl_PerVertex { vec4 gl_Position; };
+layout(location = 0) out struct { vec4 Color; vec2 UV; } Out;
+
+void main()
+{
+    Out.Color = aColor;
+    Out.UV = aUV;
+    gl_Position = vec4(aPos * pc.uScale + pc.uTranslate, 0, 1);
+}
+*/
+uint32_t cimgui_vertShaderSpv[] =
+{
+    0x07230203,0x00010000,0x00080001,0x0000002e,0x00000000,0x00020011,0x00000001,0x0006000b,
+    0x00000001,0x4c534c47,0x6474732e,0x3035342e,0x00000000,0x0003000e,0x00000000,0x00000001,
+    0x000a000f,0x00000000,0x00000004,0x6e69616d,0x00000000,0x0000000b,0x0000000f,0x00000015,
+    0x0000001b,0x0000001c,0x00030003,0x00000002,0x000001c2,0x00040005,0x00000004,0x6e69616d,
+    0x00000000,0x00030005,0x00000009,0x00000000,0x00050006,0x00000009,0x00000000,0x6f6c6f43,
+    0x00000072,0x00040006,0x00000009,0x00000001,0x00005655,0x00030005,0x0000000b,0x0074754f,
+    0x00040005,0x0000000f,0x6c6f4361,0x0000726f,0x00030005,0x00000015,0x00565561,0x00060005,
+    0x00000019,0x505f6c67,0x65567265,0x78657472,0x00000000,0x00060006,0x00000019,0x00000000,
+    0x505f6c67,0x7469736f,0x006e6f69,0x00030005,0x0000001b,0x00000000,0x00040005,0x0000001c,
+    0x736f5061,0x00000000,0x00060005,0x0000001e,0x73755075,0x6e6f4368,0x6e617473,0x00000074,
+    0x00050006,0x0000001e,0x00000000,0x61635375,0x0000656c,0x00060006,0x0000001e,0x00000001,
+    0x61725475,0x616c736e,0x00006574,0x00030005,0x00000020,0x00006370,0x00040047,0x0000000b,
+    0x0000001e,0x00000000,0x00040047,0x0000000f,0x0000001e,0x00000002,0x00040047,0x00000015,
+    0x0000001e,0x00000001,0x00050048,0x00000019,0x00000000,0x0000000b,0x00000000,0x00030047,
+    0x00000019,0x00000002,0x00040047,0x0000001c,0x0000001e,0x00000000,0x00050048,0x0000001e,
+    0x00000000,0x00000023,0x00000000,0x00050048,0x0000001e,0x00000001,0x00000023,0x00000008,
+    0x00030047,0x0000001e,0x00000002,0x00020013,0x00000002,0x00030021,0x00000003,0x00000002,
+    0x00030016,0x00000006,0x00000020,0x00040017,0x00000007,0x00000006,0x00000004,0x00040017,
+    0x00000008,0x00000006,0x00000002,0x0004001e,0x00000009,0x00000007,0x00000008,0x00040020,
+    0x0000000a,0x00000003,0x00000009,0x0004003b,0x0000000a,0x0000000b,0x00000003,0x00040015,
+    0x0000000c,0x00000020,0x00000001,0x0004002b,0x0000000c,0x0000000d,0x00000000,0x00040020,
+    0x0000000e,0x00000001,0x00000007,0x0004003b,0x0000000e,0x0000000f,0x00000001,0x00040020,
+    0x00000011,0x00000003,0x00000007,0x0004002b,0x0000000c,0x00000013,0x00000001,0x00040020,
+    0x00000014,0x00000001,0x00000008,0x0004003b,0x00000014,0x00000015,0x00000001,0x00040020,
+    0x00000017,0x00000003,0x00000008,0x0003001e,0x00000019,0x00000007,0x00040020,0x0000001a,
+    0x00000003,0x00000019,0x0004003b,0x0000001a,0x0000001b,0x00000003,0x0004003b,0x00000014,
+    0x0000001c,0x00000001,0x0004001e,0x0000001e,0x00000008,0x00000008,0x00040020,0x0000001f,
+    0x00000009,0x0000001e,0x0004003b,0x0000001f,0x00000020,0x00000009,0x00040020,0x00000021,
+    0x00000009,0x00000008,0x0004002b,0x00000006,0x00000028,0x00000000,0x0004002b,0x00000006,
+    0x00000029,0x3f800000,0x00050036,0x00000002,0x00000004,0x00000000,0x00000003,0x000200f8,
+    0x00000005,0x0004003d,0x00000007,0x00000010,0x0000000f,0x00050041,0x00000011,0x00000012,
+    0x0000000b,0x0000000d,0x0003003e,0x00000012,0x00000010,0x0004003d,0x00000008,0x00000016,
+    0x00000015,0x00050041,0x00000017,0x00000018,0x0000000b,0x00000013,0x0003003e,0x00000018,
+    0x00000016,0x0004003d,0x00000008,0x0000001d,0x0000001c,0x00050041,0x00000021,0x00000022,
+    0x00000020,0x0000000d,0x0004003d,0x00000008,0x00000023,0x00000022,0x00050085,0x00000008,
+    0x00000024,0x0000001d,0x00000023,0x00050041,0x00000021,0x00000025,0x00000020,0x00000013,
+    0x0004003d,0x00000008,0x00000026,0x00000025,0x00050081,0x00000008,0x00000027,0x00000024,
+    0x00000026,0x00050051,0x00000006,0x0000002a,0x00000027,0x00000000,0x00050051,0x00000006,
+    0x0000002b,0x00000027,0x00000001,0x00070050,0x00000007,0x0000002c,0x0000002a,0x0000002b,
+    0x00000028,0x00000029,0x00050041,0x00000011,0x0000002d,0x0000001b,0x0000000d,0x0003003e,
+    0x0000002d,0x0000002c,0x000100fd,0x00010038
+};
+
+// glsl_shader.frag, compiled with:
+// # glslangValidator -V -x -o glsl_shader.frag.u32 glsl_shader.frag
+/*
+#version 450 core
+layout(location = 0) out vec4 fColor;
+layout(set=0, binding=0) uniform sampler2D sTexture;
+layout(location = 0) in struct { vec4 Color; vec2 UV; } In;
+void main()
+{
+    fColor = In.Color * texture(sTexture, In.UV.st);
+}
+*/
+uint32_t cimgui_fragShaderSpv[] =
+{
+    0x07230203,0x00010000,0x00080001,0x0000001e,0x00000000,0x00020011,0x00000001,0x0006000b,
+    0x00000001,0x4c534c47,0x6474732e,0x3035342e,0x00000000,0x0003000e,0x00000000,0x00000001,
+    0x0007000f,0x00000004,0x00000004,0x6e69616d,0x00000000,0x00000009,0x0000000d,0x00030010,
+    0x00000004,0x00000007,0x00030003,0x00000002,0x000001c2,0x00040005,0x00000004,0x6e69616d,
+    0x00000000,0x00040005,0x00000009,0x6c6f4366,0x0000726f,0x00030005,0x0000000b,0x00000000,
+    0x00050006,0x0000000b,0x00000000,0x6f6c6f43,0x00000072,0x00040006,0x0000000b,0x00000001,
+    0x00005655,0x00030005,0x0000000d,0x00006e49,0x00050005,0x00000016,0x78655473,0x65727574,
+    0x00000000,0x00040047,0x00000009,0x0000001e,0x00000000,0x00040047,0x0000000d,0x0000001e,
+    0x00000000,0x00040047,0x00000016,0x00000022,0x00000000,0x00040047,0x00000016,0x00000021,
+    0x00000000,0x00020013,0x00000002,0x00030021,0x00000003,0x00000002,0x00030016,0x00000006,
+    0x00000020,0x00040017,0x00000007,0x00000006,0x00000004,0x00040020,0x00000008,0x00000003,
+    0x00000007,0x0004003b,0x00000008,0x00000009,0x00000003,0x00040017,0x0000000a,0x00000006,
+    0x00000002,0x0004001e,0x0000000b,0x00000007,0x0000000a,0x00040020,0x0000000c,0x00000001,
+    0x0000000b,0x0004003b,0x0000000c,0x0000000d,0x00000001,0x00040015,0x0000000e,0x00000020,
+    0x00000001,0x0004002b,0x0000000e,0x0000000f,0x00000000,0x00040020,0x00000010,0x00000001,
+    0x00000007,0x00090019,0x00000013,0x00000006,0x00000001,0x00000000,0x00000000,0x00000000,
+    0x00000001,0x00000000,0x0003001b,0x00000014,0x00000013,0x00040020,0x00000015,0x00000000,
+    0x00000014,0x0004003b,0x00000015,0x00000016,0x00000000,0x0004002b,0x0000000e,0x00000018,
+    0x00000001,0x00040020,0x00000019,0x00000001,0x0000000a,0x00050036,0x00000002,0x00000004,
+    0x00000000,0x00000003,0x000200f8,0x00000005,0x00050041,0x00000010,0x00000011,0x0000000d,
+    0x0000000f,0x0004003d,0x00000007,0x00000012,0x00000011,0x0004003d,0x00000014,0x00000017,
+    0x00000016,0x00050041,0x00000019,0x0000001a,0x0000000d,0x00000018,0x0004003d,0x0000000a,
+    0x0000001b,0x0000001a,0x00050057,0x00000007,0x0000001c,0x00000017,0x0000001b,0x00050085,
+    0x00000007,0x0000001d,0x00000012,0x0000001c,0x0003003e,0x00000009,0x0000001d,0x000100fd,
+    0x00010038
+};
 

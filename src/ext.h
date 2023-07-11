@@ -24,6 +24,7 @@ typedef struct VulkanContext_
     VkDevice            device;
     VkQueue             queue;
     VkCommandPool       pool;
+    VkPipelineLayout    layout;
 
     VkSampler           nearestSampler;
     VkSampler           linearSampler;
@@ -86,6 +87,20 @@ static void ext_vkDestroyTexture(
 
 #define CIMGUI_KEYMAP_COUNT 105
 
+typedef struct CImgui_VulkanRenderFrame_
+{
+    struct {
+        VkBuffer        buffer;
+        VkDeviceMemory  memory;
+        VkDeviceSize    size;
+    } vertex;
+    struct {
+        VkBuffer        buffer;
+        VkDeviceMemory  memory;
+        VkDeviceSize    size;
+    } index;
+} CImgui_VulkanRenderFrame;
+
 typedef struct CImgui_ {
     ImGuiContext*       context;
 
@@ -95,6 +110,10 @@ typedef struct CImgui_ {
     int                 glfwKey     [CIMGUI_KEYMAP_COUNT];
     ImGuiKey            imguiKey    [CIMGUI_KEYMAP_COUNT];
     char                keyDown     [CIMGUI_KEYMAP_COUNT];
+
+    /* Vulkan Integration */
+    CImgui_VulkanRenderFrame*   renderBuffers;
+    uint32_t                    renderBufferCount;
 } CImgui;
 
 static const char* ext_cimguiGetClipboard(void* context);

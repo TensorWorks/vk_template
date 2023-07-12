@@ -9,6 +9,8 @@ static void ext_destroy(GlobalStorage* g);
 
 typedef struct VulkanTexture
 {
+    /* TODO Note that imgui/backends/imgui_impl_vulkan.cpp uses the VkDescriptorSet itself as its texture
+     * handle within imgui. That would most certainly be the way to do it to avoid issues later */
     VkImage                 image;
     VkDeviceMemory          memory;
     VkImageView             view;
@@ -26,6 +28,7 @@ typedef struct VulkanContext_
     VkCommandPool       pool;
     VkPipelineLayout    layout;
 
+    VkRenderPass        renderpass;
     VkSampler           nearestSampler;
     VkSampler           linearSampler;
 
@@ -112,9 +115,12 @@ typedef struct CImgui_ {
     char                keyDown     [CIMGUI_KEYMAP_COUNT];
 
     /* Vulkan Integration */
+    VkPipeline                  pipeline;
+    VkDescriptorSet             desc;
     CImgui_VulkanRenderFrame*   renderBuffers;
     uint32_t                    renderBufferCount;
 } CImgui;
 
 static const char* ext_cimguiGetClipboard(void* context);
 static void ext_cimguiSetClipboard(void* context, const char* text);
+static void ext_cimguiRenderToVulkan(GlobalStorage* g, VkCommandBuffer cmd, uint32_t index);

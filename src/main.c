@@ -704,8 +704,7 @@ main(int argc, char* argv[])
     renderpassCreateInfo.dependencyCount = 2;
     renderpassCreateInfo.pDependencies = subpassDependencies;
 
-    VkRenderPass renderpass;
-    vk_result = vkCreateRenderPass(g->vulkan.device, &renderpassCreateInfo, 0, &renderpass);
+    vk_result = vkCreateRenderPass(g->vulkan.device, &renderpassCreateInfo, 0, &g->vulkan.renderpass);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateRenderPass() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -721,7 +720,7 @@ main(int argc, char* argv[])
 
     VkFramebufferCreateInfo framebufferCreateInfo = {0};
     framebufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    framebufferCreateInfo.renderPass = renderpass;
+    framebufferCreateInfo.renderPass = g->vulkan.renderpass;
     framebufferCreateInfo.attachmentCount = 2;
     framebufferCreateInfo.pAttachments = framebufferViews;
     framebufferCreateInfo.width = surfaceCapabilities.currentExtent.width;
@@ -1013,7 +1012,7 @@ main(int argc, char* argv[])
     pipeInfo.pMultisampleState = &msaaInfo;
     pipeInfo.pViewportState = &vpInfo;
     pipeInfo.pDepthStencilState = &depthInfo;
-    pipeInfo.renderPass = renderpass;
+    pipeInfo.renderPass = g->vulkan.renderpass;
     pipeInfo.pDynamicState = &dynInfo;
 
     /* Note: Without validation layers this will fail with Error Unknown
@@ -1101,7 +1100,7 @@ main(int argc, char* argv[])
 
     VkRenderPassBeginInfo rpInfo = {0};
     rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpInfo.renderPass = renderpass;
+    rpInfo.renderPass = g->vulkan.renderpass;
     rpInfo.renderArea.offset.x = 0;
     rpInfo.renderArea.offset.y = 0;
     rpInfo.renderArea.extent = surfaceCapabilities.currentExtent;
@@ -1116,6 +1115,7 @@ main(int argc, char* argv[])
     viewport.minDepth = 0.f;
     viewport.minDepth = 1.f;
 
+    /* TODO This needs to happen on every pass instead. That or just remove it once Imgui is rendering */
     for (int i = 0; i < imageCount; i++) {
         vk_result = vkBeginCommandBuffer(commandBuffers[i], &cmdInfo);
         if (vk_result != VK_SUCCESS) {
@@ -1222,7 +1222,7 @@ main(int argc, char* argv[])
     unsigned long long max64 = -1;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        int index;
+        uint32_t index;
 
         vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
         if (vk_result != VK_SUCCESS) {
@@ -1244,6 +1244,11 @@ main(int argc, char* argv[])
                     vk_result, string_VkResult(vk_result));
             return 40;
         }
+
+        /* TODO Start renderpass */
+        /* TODO Redo Triangle commands here */
+        // TODO ext_cimguiRenderToVulkan(g, commandBuffers[index], index);
+        /* TODO End renderpass */
 
         submitInfo.pCommandBuffers = &commandBuffers[index];
         vk_result = vkQueueSubmit(g->vulkan.queue, 1, &submitInfo, fences[index]);
@@ -1301,7 +1306,7 @@ main(int argc, char* argv[])
 
     vkDestroyPipelineLayout(g->vulkan.device, g->vulkan.layout, 0);
     vkDestroyPipeline(g->vulkan.device, pipeline, 0);
-    vkDestroyRenderPass(g->vulkan.device, renderpass, 0);
+    vkDestroyRenderPass(g->vulkan.device, g->vulkan.renderpass, 0);
 
     for (int i = 0; i < imageCount; i++)
         vkDestroyImageView(g->vulkan.device, imageViews[i], 0);

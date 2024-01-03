@@ -1,2 +1,11 @@
 ## TODO
 * Write an actual readme
+* Figure out why the close button doesn't work
+
+Launch must be relative to the root directory (the one this file is in), so after building with `make`, run with `build/vk_template`
+Enable validation layers by setting the following environment variable:
+```sh
+export VK_LOADER_LAYERS_ENABLE=*api_dump,*validation
+```
+`*api_dump` is extremely verbose, usually better to skip that one
+

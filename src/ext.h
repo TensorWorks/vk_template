@@ -14,6 +14,7 @@ typedef struct VulkanTexture
     VkImage                 image;
     VkDeviceMemory          memory;
     VkImageView             view;
+    VkImageLayout           layout;
 
     VkDescriptorSet         desc;
     VkDeviceSize            size;
@@ -28,13 +29,14 @@ typedef struct VulkanContext_
     VkCommandPool       pool;
     VkPipelineLayout    layout;
 
-    VkRenderPass        renderpass;
+    VkRenderPass        renderpass; /* FIXME Not necessary with Dynamic Rendering */
     VkSampler           nearestSampler;
     VkSampler           linearSampler;
 
     VkPhysicalDeviceMemoryProperties    memProps;
     VkPhysicalDeviceProperties          devProps;
     VkPhysicalDevice                    gpu;
+    VkDescriptorPool                    descriptorPool;
 } VulkanContext;
 
 static int ext_vkFindMemoryType(
@@ -107,7 +109,6 @@ typedef struct CImgui_VulkanRenderFrame_
 typedef struct CImgui_ {
     ImGuiContext*       context;
 
-    VulkanTexture       fontTexture;
     ImGuiMouseCursor    cursor;
     GLFWcursor*         cursorMap   [ImGuiMouseCursor_COUNT];
     int                 glfwKey     [CIMGUI_KEYMAP_COUNT];
@@ -115,8 +116,10 @@ typedef struct CImgui_ {
     char                keyDown     [CIMGUI_KEYMAP_COUNT];
 
     /* Vulkan Integration */
+    VulkanTexture               fontTexture;
+    VkSampler                   fontSampler;
+    VkDescriptorPool            fontDescriptorPool;
     VkPipeline                  pipeline;
-    VkDescriptorSet             desc;
     CImgui_VulkanRenderFrame*   renderBuffers;
     uint32_t                    renderBufferCount;
 } CImgui;

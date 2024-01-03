@@ -6,12 +6,9 @@
 #define CIMGUI_NO_EXPORT 1
 #include "cimgui.h"
 
-/*#include <vulkan/vk_enum_string_helper.h> */
-char*
-string_VkResult(VkResult r)
-{
-    return 0;
-}
+/* To avoid gaining more gray hairs from this in the future, note that this file requires installing
+ * the vulkan-utility-libraries package on arch */
+#include <vulkan/vk_enum_string_helper.h>
 
 /* System Libraries */
 #include <stdio.h>
@@ -70,6 +67,12 @@ main(int argc, char* argv[])
         fprintf(stderr, "Could not find any Vulkan extensions, error code [%i]:\n%s\n", code, errstr);
         return 2;
     }
+    #if 0
+    printf("Extensions requested by GLFW\n");
+    for (size_t i = 0; i < instanceExtensionCount; i++) {
+        printf("\t%s\n", instanceExtensionRequest[i]);
+    }
+    #endif
 
     /*
      * 3a) Query validation layers
@@ -91,10 +94,12 @@ main(int argc, char* argv[])
         return 3;
     }
 
+    #if 0
     printf("Detected Validation Layers:\n");
     for (int i = 0; i < instanceLayerCount; i++) {
         printf("\t%s\n", instanceLayers[i].layerName);
     }
+    #endif
 
     /*
      * 3) Vulkan lives! Create an instance
@@ -217,31 +222,52 @@ main(int argc, char* argv[])
     /*
      * 7) Get all the Vulkan _device_ extensions (as opposed to instance extensions)
      */
-    unsigned int deviceExtensionCount = 0;
-    vk_result = vkEnumerateDeviceExtensionProperties(g->vulkan.gpu, 0, &deviceExtensionCount, 0);
-    if (deviceExtensionCount <= 0 || vk_result != VK_SUCCESS) {
+    #if 0 /* Useful for querying what's available */
+    unsigned int availableDeviceExtensionCount = 0;
+    vk_result = vkEnumerateDeviceExtensionProperties(g->vulkan.gpu, 0, &availableDeviceExtensionCount, 0);
+    if (availableDeviceExtensionCount <= 0 || vk_result != VK_SUCCESS) {
         fprintf(stderr, "Could not find any Vulkan device extensions [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
         return 7;
     }
 
-    VkExtensionProperties* deviceExtensionProperties = calloc(deviceExtensionCount, sizeof(VkExtensionProperties));
-    vk_result = vkEnumerateDeviceExtensionProperties(g->vulkan.gpu, 0, &deviceExtensionCount, deviceExtensionProperties);
+    VkExtensionProperties* availableDeviceExtensionProperties = calloc(availableDeviceExtensionCount, sizeof(VkExtensionProperties));
+    vk_result = vkEnumerateDeviceExtensionProperties(g->vulkan.gpu, 0, &availableDeviceExtensionCount, availableDeviceExtensionProperties);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkEnumerateDeviceExtensionProperties() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
         return 7;
     }
 
-    const char** deviceExtensions = calloc(deviceExtensionCount, sizeof(void*));
-    for (int i = 0; i < deviceExtensionCount; i++) {
-        deviceExtensions[i] = &deviceExtensionProperties[i].extensionName[0];
+    printf("Available Device Extensions\n");
+    const char** availableDeviceExtensions = calloc(availableDeviceExtensionCount, sizeof(void*));
+    for (int i = 0; i < availableDeviceExtensionCount; i++) {
+        availableDeviceExtensions[i] = &availableDeviceExtensionProperties[i].extensionName[0];
+        printf("\t%s\n", availableDeviceExtensions[i]);
     }
+
+    free(availableDeviceExtensions);
+    free(availableDeviceExtensionProperties);
+    #endif
 
     /*
      * 8) Create a virtual device for Vulkan. This is our primary interface between the program and the GPU
      */
     float priority = 0.0f;
+    unsigned deviceExtensionCount = 1;
+    const char* deviceExtensions[] = {
+        /* FIXME This first one is an instance extension
+        "VK_KHR_get_physical_device_properties2",
+
+        "VK_KHR_create_renderpass2",
+        "VK_KHR_depth_stencil_resolve",
+        "VK_KHR_dynamic_rendering",
+        "VK_KHR_maintenance2",
+        "VK_KHR_multiview",
+        */
+        "VK_KHR_swapchain",
+    };
+
     VkDeviceQueueCreateInfo queueInfo = {0};
     queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     queueInfo.queueFamilyIndex = queueIndex;
@@ -1044,8 +1070,7 @@ main(int argc, char* argv[])
     poolCreateInfo.pPoolSizes = &poolSizeInfo;
     poolCreateInfo.maxSets = 1;
 
-    VkDescriptorPool descriptorPool;
-    vk_result = vkCreateDescriptorPool(g->vulkan.device, &poolCreateInfo, 0, &descriptorPool);
+    vk_result = vkCreateDescriptorPool(g->vulkan.device, &poolCreateInfo, 0, &g->vulkan.descriptorPool);
     if (vk_result != VK_SUCCESS) {
         fprintf(stderr, "vkCreateDescriptorPool() failed, result code [%i]: %s\n",
                 vk_result, string_VkResult(vk_result));
@@ -1057,7 +1082,7 @@ main(int argc, char* argv[])
      */
     VkDescriptorSetAllocateInfo descriptorAlloc = {0};
     descriptorAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    descriptorAlloc.descriptorPool = descriptorPool;
+    descriptorAlloc.descriptorPool = g->vulkan.descriptorPool;
     descriptorAlloc.descriptorSetCount = 1;
     descriptorAlloc.pSetLayouts = &descriptorSetLayout;
 
@@ -1301,7 +1326,7 @@ main(int argc, char* argv[])
     vkDestroyCommandPool(g->vulkan.device, g->vulkan.pool, 0);
     free(commandBuffers);
 
-    vkDestroyDescriptorPool(g->vulkan.device, descriptorPool, 0);
+    vkDestroyDescriptorPool(g->vulkan.device, g->vulkan.descriptorPool, 0);
     vkDestroyDescriptorSetLayout(g->vulkan.device, descriptorSetLayout, 0);
 
     vkDestroyPipelineLayout(g->vulkan.device, g->vulkan.layout, 0);
@@ -1319,9 +1344,6 @@ main(int argc, char* argv[])
 
     vkDestroySurfaceKHR(instance, surface, 0);
     vkDestroyInstance(instance, 0);
-
-    free(deviceExtensions);
-    free(deviceExtensionProperties);
 
     glfwDestroyWindow(window);
     glfwTerminate();

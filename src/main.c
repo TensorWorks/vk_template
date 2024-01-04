@@ -59,20 +59,27 @@ main(int argc, char* argv[])
      * 2) Check for Vulkan by requesting extension list
      */
 
-    unsigned int instanceExtensionCount = 0;
-    const char** instanceExtensionRequest = glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
-    if (!instanceExtensionRequest) {
+    #if 0
+    unsigned int requestedInstanceExtensionCount = 0;
+    const char** requestedInstanceExtensions = glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
+    if (!requestedInstanceExtensions) {
         const char* errstr;
         int code = glfwGetError(&errstr);
         fprintf(stderr, "Could not find any Vulkan extensions, error code [%i]:\n%s\n", code, errstr);
         return 2;
     }
-    #if 0
     printf("Extensions requested by GLFW\n");
-    for (size_t i = 0; i < instanceExtensionCount; i++) {
-        printf("\t%s\n", instanceExtensionRequest[i]);
+    for (size_t i = 0; i < requestedInstanceExtensionCount; i++) {
+        printf("\t%s\n", requestedInstanceExtensions[i]);
     }
     #endif
+
+    unsigned instanceExtensionCount = 3;
+    const char* instanceExtensions[] = {
+        "VK_KHR_get_physical_device_properties2", /* Required for Dynamic Rendering */
+        "VK_KHR_surface",       /* These last two are what GLFW requests at time of writing */
+        "VK_KHR_xcb_surface",   /* This may not be sufficient on every platform */
+    };
 
     /*
      * 3a) Query validation layers
@@ -117,7 +124,7 @@ main(int argc, char* argv[])
     instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceCreateInfo.pApplicationInfo = &appInfo;
     instanceCreateInfo.enabledExtensionCount = instanceExtensionCount;
-    instanceCreateInfo.ppEnabledExtensionNames = instanceExtensionRequest;
+    instanceCreateInfo.ppEnabledExtensionNames = instanceExtensions;
 
     VkInstance instance;
     vk_result = vkCreateInstance(&instanceCreateInfo, 0, &instance);
@@ -254,17 +261,13 @@ main(int argc, char* argv[])
      * 8) Create a virtual device for Vulkan. This is our primary interface between the program and the GPU
      */
     float priority = 0.0f;
-    unsigned deviceExtensionCount = 1;
+    unsigned deviceExtensionCount = 6;
     const char* deviceExtensions[] = {
-        /* FIXME This first one is an instance extension
-        "VK_KHR_get_physical_device_properties2",
-
         "VK_KHR_create_renderpass2",
         "VK_KHR_depth_stencil_resolve",
         "VK_KHR_dynamic_rendering",
         "VK_KHR_maintenance2",
         "VK_KHR_multiview",
-        */
         "VK_KHR_swapchain",
     };
 
@@ -277,6 +280,10 @@ main(int argc, char* argv[])
     VkPhysicalDeviceFeatures features = {0};
     features.samplerAnisotropy = VK_TRUE;
 
+    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeatures = {};
+    dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
+    dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
+
     VkDeviceCreateInfo deviceCreateInfo = {0};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.queueCreateInfoCount = 1;
@@ -284,6 +291,7 @@ main(int argc, char* argv[])
     deviceCreateInfo.enabledExtensionCount = deviceExtensionCount;
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
     deviceCreateInfo.pEnabledFeatures = &features;
+    deviceCreateInfo.pNext = &dynamicRenderingFeatures;
 
     vk_result = vkCreateDevice(g->vulkan.gpu, &deviceCreateInfo, 0, &g->vulkan.device);
     if (vk_result != VK_SUCCESS) {
@@ -1249,6 +1257,8 @@ main(int argc, char* argv[])
         glfwPollEvents();
         uint32_t index;
 
+        // TODO Run Imgui (Just show the demo window)
+
         vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkAcquireNextImage() failed, result code [%i]: %s\n",
@@ -1270,10 +1280,7 @@ main(int argc, char* argv[])
             return 40;
         }
 
-        /* TODO Start renderpass */
-        /* TODO Redo Triangle commands here */
-        // TODO ext_cimguiRenderToVulkan(g, commandBuffers[index], index);
-        /* TODO End renderpass */
+        ext_cimguiRenderToVulkan(g, commandBuffers[index], index);
 
         submitInfo.pCommandBuffers = &commandBuffers[index];
         vk_result = vkQueueSubmit(g->vulkan.queue, 1, &submitInfo, fences[index]);
@@ -1291,6 +1298,8 @@ main(int argc, char* argv[])
             return 40;
         }
     }
+
+    /* FIXME Need to flush all commands before we can start cleaning up */
 
     /*
      * 41) Clean up

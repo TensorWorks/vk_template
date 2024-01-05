@@ -131,6 +131,8 @@ ext_init(GlobalStorage* g)
     io->SetClipboardTextFn = ext_cimguiSetClipboard;
     io->GetClipboardTextFn = ext_cimguiGetClipboard;
     io->ClipboardUserData = 0;
+    io->DisplaySize.x = g->width;
+    io->DisplaySize.y = g->height;
     /* TODO Cursor position callback */
 
     /*
@@ -962,7 +964,7 @@ ext_cimguiSetClipboard(void* context, const char* text)
 }
 
 static void
-ext_cimguiRenderToVulkan(GlobalStorage* g, VkCommandBuffer cmd, uint32_t frame)
+ext_cimguiRenderToVulkan(GlobalStorage* g, ImDrawData* drawData, VkCommandBuffer cmd, uint32_t frame)
 {
     /* TODO Dynamic Vertex and Index buffers, this is where CImgui_VulkanRenderFrame comes in */
     // TODO Dynamic Rendering begin/end

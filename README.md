@@ -1,5 +1,6 @@
 ## TODO
 * Write an actual readme
+* Add a gitignore for imgui.ini
 * Figure out why the close button doesn't work
     - There's a whole bunch of validation errors generated when this happens so something isn't stopping properly
 

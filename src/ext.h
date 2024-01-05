@@ -129,4 +129,4 @@ typedef struct CImgui_ {
 static int ext_cimguiInitFont(GlobalStorage* g, ImGuiIO* io);
 static const char* ext_cimguiGetClipboard(void* context);
 static void ext_cimguiSetClipboard(void* context, const char* text);
-static void ext_cimguiRenderToVulkan(GlobalStorage* g, VkCommandBuffer cmd, uint32_t index);
+static void ext_cimguiRenderToVulkan(GlobalStorage* g, ImDrawData* drawData, VkCommandBuffer cmd, uint32_t index);

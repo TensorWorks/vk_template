@@ -25,8 +25,6 @@ typedef struct GlobalStorage_ GlobalStorage;
 #include "ext.c"
 
 /* TODO Make configurable */
-const int width = 1280;
-const int height = 720;
 unsigned char vertShaderSpv[];
 const int vertShaderSpvSize = 1372;
 unsigned char fragShaderSpv[];
@@ -37,6 +35,8 @@ main(int argc, char* argv[])
 {
     GlobalStorage* g = malloc(sizeof(GlobalStorage));
     memset(g, 0, sizeof(*g));
+    g->width = 1280;
+    g->height = 720;
 
     /*
      * 41-step vulkan initialization based on https://github.com/jbendtsen/stuff/blob/master/triangle.c
@@ -47,7 +47,7 @@ main(int argc, char* argv[])
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-    GLFWwindow* window = glfwCreateWindow(width, height, "vk_template", 0, 0);
+    GLFWwindow* window = glfwCreateWindow(g->width, g->height, "vk_template", 0, 0);
     if (!window) {
         const char* errstr;
         int code = glfwGetError(&errstr);
@@ -391,8 +391,8 @@ main(int argc, char* argv[])
     }
 
     if (surfaceCapabilities.currentExtent.width == 0xFFFFFFFF) {
-        surfaceCapabilities.currentExtent.width = width;
-        surfaceCapabilities.currentExtent.height = height;
+        surfaceCapabilities.currentExtent.width = g->width;
+        surfaceCapabilities.currentExtent.height = g->height;
     }
 
     /* TODO This is where you use vkGetPhysicalDeviceSurfacePresentModeKHR() to get a non-vsync presentation mode */
@@ -1117,6 +1117,8 @@ main(int argc, char* argv[])
 
     /*
      * 38) Construct the command buffers
+     * TODO This will now be done using dynamic rendering
+     * Good link to follow: https://lesleylai.info/en/vk-khr-dynamic-rendering/
      */
 
     VkCommandBufferBeginInfo cmdInfo = {0};
@@ -1148,7 +1150,6 @@ main(int argc, char* argv[])
     viewport.minDepth = 0.f;
     viewport.minDepth = 1.f;
 
-    /* TODO This needs to happen on every pass instead. That or just remove it once Imgui is rendering */
     for (int i = 0; i < imageCount; i++) {
         vk_result = vkBeginCommandBuffer(commandBuffers[i], &cmdInfo);
         if (vk_result != VK_SUCCESS) {
@@ -1182,6 +1183,22 @@ main(int argc, char* argv[])
             return 38;
         }
     }
+
+    /* New dynamic rendering info */
+    VkRenderingAttachmentInfoKHR colorAttachmentInfo = {0};
+    colorAttachmentInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    // FIXME colorAttachmentInfo.imageView = ;
+    colorAttachmentInfo.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+    colorAttachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachmentInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachmentInfo.clearValue = clearValues[0];
+
+    VkRenderingInfoKHR renderInfo = {0};
+    renderInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+    renderInfo.renderArea.extent = surfaceCapabilities.currentExtent;
+    renderInfo.layerCount = 1;
+    renderInfo.colorAttachmentCount = 1;
+    renderInfo.pColorAttachments = &colorAttachmentInfo;
 
     /*
      * 39) Prepare Main Loop
@@ -1256,8 +1273,12 @@ main(int argc, char* argv[])
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         uint32_t index;
+        bool demoOpen = true;
 
-        // TODO Run Imgui (Just show the demo window)
+        igNewFrame();
+        igShowDemoWindow(&demoOpen);
+        igEndFrame();
+        igRender();
 
         vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
         if (vk_result != VK_SUCCESS) {
@@ -1280,7 +1301,22 @@ main(int argc, char* argv[])
             return 40;
         }
 
-        ext_cimguiRenderToVulkan(g, commandBuffers[index], index);
+        // FIXME Convert to using dynamic rendering here
+        #if 0
+        vk_result = vkBeginCommandBuffer(commandBuffers[index], &cmdInfo);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "vkBeginCommandBuffer() failed, result code [%i]: %s\n",
+                    vk_result, string_VkResult(vk_result));
+            return 38;
+        }
+        vkCmdBeginRenderingKHR(commandBuffers[index], renderInfo);
+
+        renderTriangle(g, &renderInfo, commandBuffers[index]);
+        ext_cimguiRenderToVulkan(g, igGetDrawData(), commandBuffers[index], index);
+
+        vkCmdEndRenderingKHR(commandBuffers[index]);
+        vkEndCommandBuffer(commandBuffers[index]);
+        #endif
 
         submitInfo.pCommandBuffers = &commandBuffers[index];
         vk_result = vkQueueSubmit(g->vulkan.queue, 1, &submitInfo, fences[index]);
@@ -1358,6 +1394,24 @@ main(int argc, char* argv[])
     glfwTerminate();
 
     return 0;
+}
+
+static void
+renderTriangle(GlobalStorage* g, VkRenderingInfoKHR* renderInfo, VkCommmandBuffer cmd)
+{
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, scissor);
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            g->vulkan.layout, 0, 1, &descriptorSet, 0, 0);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &data[0].buffer, &offset);
+    vkCmdBindIndexBuffer(cmd, data[1].buffer, 0, VK_INDEX_TYPE_UINT32);
+
+    const int indexCount = 3;
+    vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 1);
 }
 
 /* TODO Compile and pass in shaders manually, remembering to run the SPIR-V compiler first

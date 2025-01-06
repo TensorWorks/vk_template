@@ -10,9 +10,6 @@ PFN_vkQueuePresentKHR       vkQueuePresent;
 typedef struct GlobalStorage_ {
     VulkanContext vulkan;
     CImgui cimgui;
-
-    uint32_t width;
-    uint32_t height;
 } GlobalStorage;
 
-static void renderTriangle(GlobalStorage* g, VkRenderingInfoKHR* renderInfo, VkCommandBuffer cmd);
+static void render(GlobalStorage* g, VkCommandBuffer* cmd);

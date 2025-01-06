@@ -11,6 +11,7 @@
 #include <vulkan/vk_enum_string_helper.h>
 
 /* System Libraries */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,8 @@ typedef struct GlobalStorage_ GlobalStorage;
 #include "ext.c"
 
 /* TODO Make configurable */
+const int width = 1280;
+const int height = 720;
 unsigned char vertShaderSpv[];
 const int vertShaderSpvSize = 1372;
 unsigned char fragShaderSpv[];
@@ -35,8 +38,6 @@ main(int argc, char* argv[])
 {
     GlobalStorage* g = malloc(sizeof(GlobalStorage));
     memset(g, 0, sizeof(*g));
-    g->width = 1280;
-    g->height = 720;
 
     /*
      * 41-step vulkan initialization based on https://github.com/jbendtsen/stuff/blob/master/triangle.c
@@ -47,7 +48,7 @@ main(int argc, char* argv[])
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-    GLFWwindow* window = glfwCreateWindow(g->width, g->height, "vk_template", 0, 0);
+    GLFWwindow* window = glfwCreateWindow(width, height, "vk_template", 0, 0);
     if (!window) {
         const char* errstr;
         int code = glfwGetError(&errstr);
@@ -59,27 +60,20 @@ main(int argc, char* argv[])
      * 2) Check for Vulkan by requesting extension list
      */
 
-    #if 0
-    unsigned int requestedInstanceExtensionCount = 0;
-    const char** requestedInstanceExtensions = glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
-    if (!requestedInstanceExtensions) {
+    unsigned int instanceExtensionCount = 0;
+    const char** instanceExtensionRequest = glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
+    if (!instanceExtensionRequest) {
         const char* errstr;
         int code = glfwGetError(&errstr);
         fprintf(stderr, "Could not find any Vulkan extensions, error code [%i]:\n%s\n", code, errstr);
         return 2;
     }
+    #if 0
     printf("Extensions requested by GLFW\n");
-    for (size_t i = 0; i < requestedInstanceExtensionCount; i++) {
-        printf("\t%s\n", requestedInstanceExtensions[i]);
+    for (size_t i = 0; i < instanceExtensionCount; i++) {
+        printf("\t%s\n", instanceExtensionRequest[i]);
     }
     #endif
-
-    unsigned instanceExtensionCount = 3;
-    const char* instanceExtensions[] = {
-        "VK_KHR_get_physical_device_properties2", /* Required for Dynamic Rendering */
-        "VK_KHR_surface",       /* These last two are what GLFW requests at time of writing */
-        "VK_KHR_xcb_surface",   /* This may not be sufficient on every platform */
-    };
 
     /*
      * 3a) Query validation layers
@@ -124,7 +118,7 @@ main(int argc, char* argv[])
     instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceCreateInfo.pApplicationInfo = &appInfo;
     instanceCreateInfo.enabledExtensionCount = instanceExtensionCount;
-    instanceCreateInfo.ppEnabledExtensionNames = instanceExtensions;
+    instanceCreateInfo.ppEnabledExtensionNames = instanceExtensionRequest;
 
     VkInstance instance;
     vk_result = vkCreateInstance(&instanceCreateInfo, 0, &instance);
@@ -261,13 +255,17 @@ main(int argc, char* argv[])
      * 8) Create a virtual device for Vulkan. This is our primary interface between the program and the GPU
      */
     float priority = 0.0f;
-    unsigned deviceExtensionCount = 6;
+    unsigned deviceExtensionCount = 1;
     const char* deviceExtensions[] = {
+        /* FIXME This first one is an instance extension
+        "VK_KHR_get_physical_device_properties2",
+
         "VK_KHR_create_renderpass2",
         "VK_KHR_depth_stencil_resolve",
         "VK_KHR_dynamic_rendering",
         "VK_KHR_maintenance2",
         "VK_KHR_multiview",
+        */
         "VK_KHR_swapchain",
     };
 
@@ -280,10 +278,6 @@ main(int argc, char* argv[])
     VkPhysicalDeviceFeatures features = {0};
     features.samplerAnisotropy = VK_TRUE;
 
-    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeatures = {};
-    dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
-    dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
-
     VkDeviceCreateInfo deviceCreateInfo = {0};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.queueCreateInfoCount = 1;
@@ -291,7 +285,6 @@ main(int argc, char* argv[])
     deviceCreateInfo.enabledExtensionCount = deviceExtensionCount;
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
     deviceCreateInfo.pEnabledFeatures = &features;
-    deviceCreateInfo.pNext = &dynamicRenderingFeatures;
 
     vk_result = vkCreateDevice(g->vulkan.gpu, &deviceCreateInfo, 0, &g->vulkan.device);
     if (vk_result != VK_SUCCESS) {
@@ -391,8 +384,8 @@ main(int argc, char* argv[])
     }
 
     if (surfaceCapabilities.currentExtent.width == 0xFFFFFFFF) {
-        surfaceCapabilities.currentExtent.width = g->width;
-        surfaceCapabilities.currentExtent.height = g->height;
+        surfaceCapabilities.currentExtent.width = width;
+        surfaceCapabilities.currentExtent.height = height;
     }
 
     /* TODO This is where you use vkGetPhysicalDeviceSurfacePresentModeKHR() to get a non-vsync presentation mode */
@@ -1117,8 +1110,6 @@ main(int argc, char* argv[])
 
     /*
      * 38) Construct the command buffers
-     * TODO This will now be done using dynamic rendering
-     * Good link to follow: https://lesleylai.info/en/vk-khr-dynamic-rendering/
      */
 
     VkCommandBufferBeginInfo cmdInfo = {0};
@@ -1183,22 +1174,6 @@ main(int argc, char* argv[])
             return 38;
         }
     }
-
-    /* New dynamic rendering info */
-    VkRenderingAttachmentInfoKHR colorAttachmentInfo = {0};
-    colorAttachmentInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    // FIXME colorAttachmentInfo.imageView = ;
-    colorAttachmentInfo.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-    colorAttachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachmentInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachmentInfo.clearValue = clearValues[0];
-
-    VkRenderingInfoKHR renderInfo = {0};
-    renderInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-    renderInfo.renderArea.extent = surfaceCapabilities.currentExtent;
-    renderInfo.layerCount = 1;
-    renderInfo.colorAttachmentCount = 1;
-    renderInfo.pColorAttachments = &colorAttachmentInfo;
 
     /*
      * 39) Prepare Main Loop
@@ -1273,57 +1248,41 @@ main(int argc, char* argv[])
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         uint32_t index;
-        bool demoOpen = true;
 
-        igNewFrame();
-        igShowDemoWindow(&demoOpen);
-        igEndFrame();
-        igRender();
+        vertexes[12] = sinf(glfwGetTime());
+        ext_vkUpdateBuffer(&g->vulkan, data[0].bytes, data[0].size, &data[0].buffer, &data[0].memory);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "Vertex data reupload failed\n");
+            return 40;
+        }
 
         vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkAcquireNextImage() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
-            return 40;
+            return 41;
         }
 
         vk_result = vkWaitForFences(g->vulkan.device, 1, &fences[index], VK_TRUE, max64);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkWaitForFences() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
-            return 40;
+            return 42;
         }
 
         vk_result = vkResetFences(g->vulkan.device, 1, &fences[index]);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkResetFences() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
-            return 40;
+            return 43;
         }
-
-        // FIXME Convert to using dynamic rendering here
-        #if 0
-        vk_result = vkBeginCommandBuffer(commandBuffers[index], &cmdInfo);
-        if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkBeginCommandBuffer() failed, result code [%i]: %s\n",
-                    vk_result, string_VkResult(vk_result));
-            return 38;
-        }
-        vkCmdBeginRenderingKHR(commandBuffers[index], renderInfo);
-
-        renderTriangle(g, &renderInfo, commandBuffers[index]);
-        ext_cimguiRenderToVulkan(g, igGetDrawData(), commandBuffers[index], index);
-
-        vkCmdEndRenderingKHR(commandBuffers[index]);
-        vkEndCommandBuffer(commandBuffers[index]);
-        #endif
 
         submitInfo.pCommandBuffers = &commandBuffers[index];
         vk_result = vkQueueSubmit(g->vulkan.queue, 1, &submitInfo, fences[index]);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkQueueSubmit() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
-            return 40;
+            return 44;
         }
 
         presentInfo.pImageIndices = &index;
@@ -1331,11 +1290,9 @@ main(int argc, char* argv[])
         if (vk_result != VK_SUCCESS && vk_result != VK_SUBOPTIMAL_KHR) {
             fprintf(stderr, "vkQueuePresent() failed, result code [%i]: %s\n",
                     vk_result, string_VkResult(vk_result));
-            return 40;
+            return 45;
         }
     }
-
-    /* FIXME Need to flush all commands before we can start cleaning up */
 
     /*
      * 41) Clean up
@@ -1395,27 +1352,6 @@ main(int argc, char* argv[])
 
     return 0;
 }
-
-static void
-renderTriangle(GlobalStorage* g, VkRenderingInfoKHR* renderInfo, VkCommmandBuffer cmd)
-{
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    vkCmdSetScissor(cmd, 0, 1, scissor);
-
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            g->vulkan.layout, 0, 1, &descriptorSet, 0, 0);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &data[0].buffer, &offset);
-    vkCmdBindIndexBuffer(cmd, data[1].buffer, 0, VK_INDEX_TYPE_UINT32);
-
-    const int indexCount = 3;
-    vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 1);
-}
-
-/* TODO Compile and pass in shaders manually, remembering to run the SPIR-V compiler first
- * as part of the Make process */
 
 // Fragment Shader (https://github.com/SaschaWillems/Vulkan/data/shaders/triangle/triangle.frag)
 /*

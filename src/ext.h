@@ -53,6 +53,13 @@ static VkResult ext_vkCreateBuffer(
         VkBuffer* out_buffer,
         VkDeviceMemory* out_memory
 );
+static VkResult ext_vkUpdateBuffer(
+        VulkanContext* vulkan,
+        void* data,
+        VkDeviceSize size, // FIXME: This is the _current_ size which must match up.
+        VkBuffer* buffer,
+        VkDeviceMemory* memory
+); // TODO Allow resizing without needing to generate a new buffer handle.
 static VkCommandBuffer ext_vkQuickCommandBegin(
         VulkanContext* vulkan
 );
@@ -62,8 +69,9 @@ static void ext_vkQuickCommandEnd(
 );
 static VkResult ext_vkImageLayout(
         VulkanContext* vulkan,
-        VulkanTexture* texture,
+        VkImage image,
         VkFormat format,
+        VkImageLayout oldLayout,
         VkImageLayout newLayout
 );
 static void ext_vkCopyBufferToImage(
@@ -118,15 +126,11 @@ typedef struct CImgui_ {
     VulkanTexture               fontTexture;
     VkSampler                   fontSampler;
     VkDescriptorPool            fontDescriptorPool;
-    VkFormat                    format;
-    VkDescriptorSetLayout       layout;
     VkPipeline                  pipeline;
-    VkPipelineLayout            pipelineLayout;
     CImgui_VulkanRenderFrame*   renderBuffers;
     uint32_t                    renderBufferCount;
 } CImgui;
 
-static int ext_cimguiInitFont(GlobalStorage* g, ImGuiIO* io);
 static const char* ext_cimguiGetClipboard(void* context);
 static void ext_cimguiSetClipboard(void* context, const char* text);
-static void ext_cimguiRenderToVulkan(GlobalStorage* g, ImDrawData* drawData, VkCommandBuffer cmd, uint32_t index);
+static void ext_cimguiRenderToVulkan(GlobalStorage* g, VkCommandBuffer cmd, uint32_t index);

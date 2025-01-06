@@ -57,6 +57,7 @@ main(int argc, char* argv[])
 
     /*
      * 2) Check for Vulkan by requesting extension list
+     * TODO Environment variable to control extension/validation logging
      */
 
     #if 0
@@ -1201,7 +1202,7 @@ main(int argc, char* argv[])
     renderInfo.pColorAttachments = &colorAttachmentInfo;
 
     /*
-     * 39) Prepare Main Loop
+     * 39) Prepare Main Loop (Is this the part that changes?)
      */
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
@@ -1223,6 +1224,13 @@ main(int argc, char* argv[])
 
     vkGetDeviceQueue(g->vulkan.device, queueIndex, 0, &g->vulkan.queue);
 
+    /* Dynamic Rendering Pipeline */
+    VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo = {0};
+    pipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    pipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    pipelineRenderingCreateInfo.pColorAttachmentFormats = colorFormat.format;
+
+    pipeInfo
     /*
      * 39a) Global samplers
      */
@@ -1397,7 +1405,7 @@ main(int argc, char* argv[])
 }
 
 static void
-renderTriangle(GlobalStorage* g, VkRenderingInfoKHR* renderInfo, VkCommmandBuffer cmd)
+renderTriangle(GlobalStorage* g, VkRenderingInfoKHR* renderInfo, VkCommandBuffer cmd)
 {
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, scissor);

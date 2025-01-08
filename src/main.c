@@ -1141,40 +1141,6 @@ main(int argc, char* argv[])
     viewport.minDepth = 0.f;
     viewport.minDepth = 1.f;
 
-    for (int i = 0; i < imageCount; i++) {
-        vk_result = vkBeginCommandBuffer(commandBuffers[i], &cmdInfo);
-        if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkBeginCommandBuffer() failed, result code [%i]: %s\n",
-                    vk_result, string_VkResult(vk_result));
-            return 38;
-        }
-
-        rpInfo.framebuffer = framebuffers[i];
-        vkCmdBeginRenderPass(commandBuffers[i], &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-        vkCmdSetViewport(commandBuffers[i], 0, 1, &viewport);
-        vkCmdSetScissor(commandBuffers[i], 0, 1, scissor);
-
-        vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                g->vulkan.layout, 0, 1, &descriptorSet, 0, 0);
-        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, &data[0].buffer, &offset);
-        vkCmdBindIndexBuffer(commandBuffers[i], data[1].buffer, 0, VK_INDEX_TYPE_UINT32);
-
-        const int indexCount = 3;
-        vkCmdDrawIndexed(commandBuffers[i], indexCount, 1, 0, 0, 1);
-
-        vkCmdEndRenderPass(commandBuffers[i]);
-        vk_result = vkEndCommandBuffer(commandBuffers[i]);
-        if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkEndCommandBuffer() failed, result code [%i]: %s\n",
-                    vk_result, string_VkResult(vk_result));
-            return 38;
-        }
-    }
-
     /*
      * 39) Prepare Main Loop
      */
@@ -1245,16 +1211,114 @@ main(int argc, char* argv[])
      */
 
     unsigned long long max64 = -1;
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-        uint32_t index;
+    double lastTime = glfwGetTime();
 
-        vertexes[12] = sinf(glfwGetTime());
-        ext_vkUpdateBuffer(&g->vulkan, data[0].bytes, data[0].size, &data[0].buffer, &data[0].memory);
+    while (!glfwWindowShouldClose(window)) {
+        double currentTime = glfwGetTime();
+        double deltaTime = currentTime - lastTime;
+        uint32_t index;
+        bool demoOpen = true;
+        ImGuiIO* io = igGetIO();
+
+        glfwPollEvents();
+        // TODO Input state update
+
+        io->DisplaySize.x = surfaceCapabilities.currentExtent.width;
+        io->DisplaySize.y = surfaceCapabilities.currentExtent.height;
+        io->DisplayFramebufferScale = (ImVec2){1.f, 1.f};
+        io->DeltaTime = deltaTime;
+        igNewFrame();
+        igShowDemoWindow(&demoOpen);
+        igEndFrame(); // Apparently this isn't actually crucial, most of the time igNewFrame is enough
+        igRender();
+
+        VkDeviceSize frameVertexCount = 0;
+        VkDeviceSize frameIndexCount = 0;
+        ImDrawData* dd = igGetDrawData();
+        ImDrawList* cmds;
+        ImDrawCmd* cmd;
+
+        // Doing a bunch of size checks first, probably not necessary every frame
+
+        if (dd->CmdListsCount > SMALL_PAGE) {
+            fprintf(stderr, "Too many DearImgui drawcalls: %i, capacity for only %i\n",
+                    dd->CmdListsCount, SMALL_PAGE);
+            return 40;
+        }
+
+        for (size_t cmdListIndex = 0; cmdListIndex < dd->CmdListsCount; cmdListIndex++) {
+            cmds = dd->CmdLists[cmdListIndex];
+            frameVertexCount += cmds->VtxBuffer.Size;
+            g->cimgui.calls[cmdListIndex].index = frameIndexCount;
+            float minx = (cmd->ClipRect.x - dd->DisplayPos.x) * io->DisplayFramebufferScale.x;
+            float miny = (cmd->ClipRect.y - dd->DisplayPos.y) * io->DisplayFramebufferScale.y;
+            float maxx = (cmd->ClipRect.z - dd->DisplayPos.x) * io->DisplayFramebufferScale.x;
+            float maxy = (cmd->ClipRect.w - dd->DisplayPos.y) * io->DisplayFramebufferScale.y;
+            g->cimgui.calls[cmdListIndex].scissor.offset.x = minx;
+            g->cimgui.calls[cmdListIndex].scissor.offset.y = miny;
+            g->cimgui.calls[cmdListIndex].scissor.extent.width = maxx - minx;
+            g->cimgui.calls[cmdListIndex].scissor.extent.height = maxy - miny;
+            for (int cmdIndex = 0; cmdIndex < cmds->CmdBuffer.Size; cmdIndex++) {
+                cmd = cmds->CmdBuffer.Data + cmdIndex;
+                frameIndexCount += cmd->ElemCount;
+                g->cimgui.calls[cmdListIndex].indexCount += cmd->ElemCount;
+            }
+        }
+
+        if (frameVertexCount > BIG_PAGE) {
+            fprintf(stderr, "Too many DearImgui vertexes: %i, capacity for only %i\n",
+                    frameVertexCount, BIG_PAGE);
+            return 40;
+        }
+
+        if (frameIndexCount > BIG_PAGE) {
+            fprintf(stderr, "Too many DearImgui vertex indexes: %i, capacity for only %i\n",
+                    frameIndexCount, BIG_PAGE);
+            return 40;
+        }
+
+        // Loop through again to update CIMGUI vertex and index buffers
+
+        frameVertexCount = 0;
+        frameIndexCount = 0;
+        for (size_t cmdListIndex = 0; cmdListIndex < dd->CmdListsCount; cmdListIndex++) {
+            cmds = dd->CmdLists[cmdListIndex];
+            memcpy(g->cimgui.vertex.writeBuffer + frameVertexCount * IG_VERTEX_SIZE, cmds->VtxBuffer.Data,
+                    cmds->VtxBuffer.Size * IG_VERTEX_SIZE);
+            frameVertexCount += cmds->VtxBuffer.Size;
+            for (int cmdIndex = 0; cmdIndex < cmds->CmdBuffer.Size; cmdIndex ++) {
+                cmd = cmds->CmdBuffer.Data + cmdIndex;
+                for (int element = 0; element < cmd->ElemCount; element += 3) {
+                    g->cimgui.index.writeBuffer[frameIndexCount++] = cmds->IdxBuffer.Data[cmd->IdxOffset + element + 0];
+                    g->cimgui.index.writeBuffer[frameIndexCount++] = cmds->IdxBuffer.Data[cmd->IdxOffset + element + 1];
+                    g->cimgui.index.writeBuffer[frameIndexCount++] = cmds->IdxBuffer.Data[cmd->IdxOffset + element + 2];
+                }
+            }
+        }
+
+        // Upload new data to buffers
+        vk_result = ext_vkUpdateBuffer(&g->vulkan, g->cimgui.vertex.writeBuffer, g->cimgui.vertex.size,
+                                        &g->cimgui.vertex.buffer, &g->cimgui.vertex.memory);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "Vertex data reupload failed\n");
             return 40;
         }
+        vk_result = ext_vkUpdateBuffer(&g->vulkan, g->cimgui.index.writeBuffer, g->cimgui.index.size,
+                                        &g->cimgui.index.buffer, &g->cimgui.index.memory);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "Vertex data reupload failed\n");
+            return 40;
+        }
+
+        // Update Dancing Triangle
+        vertexes[12] = sinf(currentTime);
+        vk_result = ext_vkUpdateBuffer(&g->vulkan, data[0].bytes, data[0].size, &data[0].buffer, &data[0].memory);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "Vertex data reupload failed\n");
+            return 40;
+        }
+
+        // Render to CmdList
 
         vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
         if (vk_result != VK_SUCCESS) {
@@ -1262,6 +1326,56 @@ main(int argc, char* argv[])
                     vk_result, string_VkResult(vk_result));
             return 41;
         }
+
+        /* TODO Do we even need two alternating command buffers now? It doesn't seem like it matters */
+        vk_result = vkBeginCommandBuffer(commandBuffers[index], &cmdInfo);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "vkBeginCommandBuffer() failed, result code [%i]: %s\n",
+                    vk_result, string_VkResult(vk_result));
+            return 38;
+        }
+
+        rpInfo.framebuffer = framebuffers[index];
+        vkCmdBeginRenderPass(commandBuffers[index], &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        vkCmdSetViewport(commandBuffers[index], 0, 1, &viewport);
+        vkCmdSetScissor(commandBuffers[index], 0, 1, scissor);
+
+        vkCmdBindDescriptorSets(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g->vulkan.layout, 0, 1, &descriptorSet, 0, 0);
+        vkCmdBindPipeline(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(commandBuffers[index], 0, 1, &data[0].buffer, &offset);
+        vkCmdBindIndexBuffer(commandBuffers[index], data[1].buffer, 0, VK_INDEX_TYPE_UINT32);
+
+        const int indexCount = 3;
+        vkCmdDrawIndexed(commandBuffers[index], indexCount, 1, 0, 0, 1);
+
+        /* Now the CIMGUI commands, doesn't need a separate subpass because subpasses are only relevant
+         * for color attachement changes (ie. framebuffers)
+         * TODO Note that each command contains a TextureID field! Need to bind this properly
+         * TODO Does the actual texture get bound by the descriptor set as well? */
+        vkCmdBindDescriptorSets(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g->vulkan.layout, 0, 1, &g->cimgui.fontTexture.desc, 0, 0);
+        vkCmdBindPipeline(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS, g->cimgui.pipeline);
+        for (size_t cmdListIndex = 0; cmdListIndex < dd->CmdListsCount; cmdListIndex++) {
+            vkCmdSetScissor(commandBuffers[index], 0, 1, &g->cimgui.calls[cmdListIndex].scissor);
+            vkCmdBindVertexBuffers(commandBuffers[index], 0, 1, &g->cimgui.vertex.buffer, &offset);
+            vkCmdBindIndexBuffer(commandBuffers[index], g->cimgui.index.buffer, 0, VK_INDEX_TYPE_UINT16);
+            vkCmdDrawIndexed(commandBuffers[index], g->cimgui.calls[cmdListIndex].indexCount,
+                                1, g->cimgui.calls[cmdListIndex].index, 0, 1);
+        }
+
+        vkCmdEndRenderPass(commandBuffers[index]);
+        vk_result = vkEndCommandBuffer(commandBuffers[index]);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "vkEndCommandBuffer() failed, result code [%i]: %s\n",
+                    vk_result, string_VkResult(vk_result));
+            return 38;
+        }
+
+        // Display CmdList
 
         vk_result = vkWaitForFences(g->vulkan.device, 1, &fences[index], VK_TRUE, max64);
         if (vk_result != VK_SUCCESS) {
@@ -1292,6 +1406,7 @@ main(int argc, char* argv[])
                     vk_result, string_VkResult(vk_result));
             return 45;
         }
+        lastTime = currentTime;
     }
 
     /*

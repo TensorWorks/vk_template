@@ -370,7 +370,7 @@ ext_init(GlobalStorage* g)
     g->cimgui.imguiKey[104] = ImGuiKey_KeypadEqual;
 
     /* Shaders */
-    VkResult res;
+    VkResult res = VK_SUCCESS;
     VkShaderModule vertShader, fragShader;
 
     VkShaderModuleCreateInfo shaderInfo = {0};
@@ -393,7 +393,8 @@ ext_init(GlobalStorage* g)
         return 4;
     }
 
-    /* Uniform Descriptors */
+    /* Uniform Descriptors
+     * FIXME The shaders don't actually have uniforms, do we even need this? */
 
     VkDescriptorSetLayoutBinding descriptorSetLayoutBinding = {0};
     descriptorSetLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -512,7 +513,7 @@ ext_init(GlobalStorage* g)
     shaderStage[1].pName = "main";
 
     VkVertexInputBindingDescription binding = {0};
-    binding.stride = sizeof(ImDrawVert);
+    binding.stride = sizeof(ImDrawVert); // FIXME Use this everywhere instead of IG_VERTEX_SIZE
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
     VkVertexInputAttributeDescription attributes[3] = {0};
@@ -604,6 +605,34 @@ ext_init(GlobalStorage* g)
         return 10;
     }
 
+    /* Create Vertex/Index/Uniform buffers, reallocation is largely discouraged so just preallocate a large
+     * amount (A couple of MiB should do). */
+    g->cimgui.vertex.size = BIG_PAGE * IG_VERTEX_SIZE;
+    g->cimgui.index.size = BIG_PAGE * IG_INDEX_SIZE;
+    g->cimgui.uniform.size = SMALL_PAGE;
+    g->cimgui.callsSize = sizeof(*g->cimgui.calls) * SMALL_PAGE;
+
+    g->cimgui.vertex.writeBuffer = malloc(g->cimgui.vertex.size);
+    memset(g->cimgui.vertex.writeBuffer, 0, g->cimgui.vertex.size);
+    g->cimgui.index.writeBuffer = malloc(g->cimgui.index.size);
+    memset(g->cimgui.index.writeBuffer, 0, g->cimgui.index.size);
+    g->cimgui.calls = malloc(g->cimgui.callsSize);
+    memset(g->cimgui.calls, 0, g->cimgui.callsSize);
+
+    ext_vkCreateBuffer(&g->vulkan, g->cimgui.vertex.writeBuffer, g->cimgui.vertex.size,
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &g->cimgui.vertex.buffer, &g->cimgui.vertex.memory);
+    ext_vkCreateBuffer(&g->vulkan, g->cimgui.index.writeBuffer, g->cimgui.index.size,
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &g->cimgui.index.buffer, &g->cimgui.index.memory);
+    /* Not sure if this will even be needed, so just reusing an existing writebuffer */
+    ext_vkCreateBuffer(&g->vulkan, g->cimgui.vertex.writeBuffer, g->cimgui.uniform.size,
+                        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &g->cimgui.uniform.buffer, &g->cimgui.uniform.memory);
+
     /* Cleanup */
 
     vkDestroyShaderModule(g->vulkan.device, vertShader, 0);
@@ -628,6 +657,9 @@ ext_destroy(GlobalStorage* g)
         glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_ResizeNWSE]);
         glfwDestroyCursor(g->cimgui.cursorMap[ImGuiMouseCursor_NotAllowed]);
     #endif
+
+    free(g->cimgui.vertex.writeBuffer);
+    free(g->cimgui.index.writeBuffer);
 
     igDestroyContext(g->cimgui.context);
 }
@@ -656,7 +688,7 @@ static VkResult
 ext_vkCreateBuffer(VulkanContext* vulkan, void* data, VkDeviceSize size, VkBufferUsageFlags usage,
                     VkMemoryPropertyFlags properties, VkBuffer* buffer, VkDeviceMemory* memory)
 {
-    VkResult res;
+    VkResult res = VK_SUCCESS;
 
     VkBufferCreateInfo createInfo = {0};
     createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -712,7 +744,7 @@ static VkResult
 ext_vkUpdateBuffer(VulkanContext* vulkan, void* data, VkDeviceSize size,
                     VkBuffer* buffer, VkDeviceMemory* memory)
 {
-    VkResult res;
+    VkResult res = VK_SUCCESS;
     void* mapping;
     res = vkMapMemory(vulkan->device, *memory, 0, size, 0, &mapping);
     if (res != VK_SUCCESS) {
@@ -844,7 +876,7 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
     texture->height = height;
     texture->size   = width * height * 4;
 
-    VkResult res;
+    VkResult res = VK_SUCCESS;
     VkBuffer buffer;
     VkDeviceMemory memory;
     res = ext_vkCreateBuffer(vulkan, pixels, texture->size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -965,11 +997,10 @@ ext_cimguiSetClipboard(void* context, const char* text)
 }
 
 static void
-ext_cimguiRenderToVulkan(GlobalStorage* g, VkCommandBuffer cmd, uint32_t frame)
+ext_cimguiRenderToCmdList(GlobalStorage* g, VkCommandBuffer* cmd)
 {
-    /* TODO Dynamic Vertex and Index buffers, this is where CImgui_VulkanRenderFrame comes in */
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->vulkan.layout, 0, 1, &g->cimgui.fontTexture.desc, 0, 0);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->cimgui.pipeline);
+    vkCmdBindDescriptorSets(*cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->vulkan.layout, 0, 1, &g->cimgui.fontTexture.desc, 0, 0);
+    vkCmdBindPipeline(*cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->cimgui.pipeline);
     /* TODO This needs to be done in the middle of the Command Submission,
      * which itself needs to be changed in main */
 }

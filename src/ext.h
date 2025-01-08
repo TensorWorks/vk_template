@@ -1,3 +1,10 @@
+/* These are used for allocating buffers for vertexes and so on.
+ * Represents the multiple of instances, not the actual size */
+const VkDeviceSize IG_VERTEX_SIZE = 20; // Pos (2f), UV (2f), Color (4u)
+const VkDeviceSize IG_INDEX_SIZE = 2;
+#define SMALL_PAGE 1024
+#define BIG_PAGE (1024 * 1024)
+
 static int ext_init(GlobalStorage* g);
 static void ext_destroy(GlobalStorage* g);
 
@@ -53,13 +60,15 @@ static VkResult ext_vkCreateBuffer(
         VkBuffer* out_buffer,
         VkDeviceMemory* out_memory
 );
+
+/* Note that this will not resize the buffer, allocate one big enough for your needs at the outset */
 static VkResult ext_vkUpdateBuffer(
         VulkanContext* vulkan,
         void* data,
         VkDeviceSize size, // FIXME: This is the _current_ size which must match up.
         VkBuffer* buffer,
         VkDeviceMemory* memory
-); // TODO Allow resizing without needing to generate a new buffer handle.
+);
 static VkCommandBuffer ext_vkQuickCommandBegin(
         VulkanContext* vulkan
 );
@@ -99,19 +108,11 @@ static void ext_vkDestroyTexture(
 
 #define CIMGUI_KEYMAP_COUNT 105
 
-typedef struct CImgui_VulkanRenderFrame_
-{
-    struct {
-        VkBuffer        buffer;
-        VkDeviceMemory  memory;
-        VkDeviceSize    size;
-    } vertex;
-    struct {
-        VkBuffer        buffer;
-        VkDeviceMemory  memory;
-        VkDeviceSize    size;
-    } index;
-} CImgui_VulkanRenderFrame;
+typedef struct {
+    VkDeviceSize index;
+    VkDeviceSize indexCount;
+    VkRect2D scissor;
+} CImguiDrawCall;
 
 typedef struct CImgui_ {
     ImGuiContext*       context;
@@ -127,8 +128,25 @@ typedef struct CImgui_ {
     VkSampler                   fontSampler;
     VkDescriptorPool            fontDescriptorPool;
     VkPipeline                  pipeline;
-    CImgui_VulkanRenderFrame*   renderBuffers;
-    uint32_t                    renderBufferCount;
+    struct {
+        VkBuffer        buffer;
+        VkDeviceMemory  memory;
+        VkDeviceSize    size;
+        uint8_t*        writeBuffer;
+    } vertex;
+    struct {
+        VkBuffer        buffer;
+        VkDeviceMemory  memory;
+        VkDeviceSize    size;
+        uint16_t*       writeBuffer;
+    } index;
+    struct {
+        VkBuffer        buffer;
+        VkDeviceMemory  memory;
+        VkDeviceSize    size;
+    } uniform;
+    CImguiDrawCall*     calls;
+    size_t              callsSize;
 } CImgui;
 
 static const char* ext_cimguiGetClipboard(void* context);

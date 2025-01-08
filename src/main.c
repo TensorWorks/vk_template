@@ -1206,6 +1206,13 @@ main(int argc, char* argv[])
         return 39;
     }
 
+    /* GLFW->CIMGUI Input Callbacks */
+    glfwSetKeyCallback(window, ext_cimguiKeyCallback);
+    glfwSetCharCallback(window, ext_cimguiCharacterCallback);
+    glfwSetCursorPosCallback(window, ext_cimguiMousePositionCallback);
+    glfwSetMouseButtonCallback(window, ext_cimguiMouseButtonCallback);
+    glfwSetScrollCallback(window, ext_cimguiMouseWheelCallback);
+
     /*
      * 40) Main Loop
      */
@@ -1221,7 +1228,6 @@ main(int argc, char* argv[])
         ImGuiIO* io = igGetIO();
 
         glfwPollEvents();
-        // TODO Input state update
 
         io->DisplaySize.x = surfaceCapabilities.currentExtent.width;
         io->DisplaySize.y = surfaceCapabilities.currentExtent.height;
@@ -1231,6 +1237,8 @@ main(int argc, char* argv[])
         igShowDemoWindow(&demoOpen);
         igEndFrame(); // Apparently this isn't actually crucial, most of the time igNewFrame is enough
         igRender();
+
+        // TODO Update cursor based on that requested by DearImgui
 
         VkDeviceSize frameVertexCount = 0;
         VkDeviceSize frameIndexCount = 0;
@@ -1283,6 +1291,8 @@ main(int argc, char* argv[])
         frameIndexCount = 0;
         for (size_t cmdListIndex = 0; cmdListIndex < dd->CmdListsCount; cmdListIndex++) {
             cmds = dd->CmdLists[cmdListIndex];
+            /* FIXME sRGB correction! All the ducks are in row which will be great for making use of cache
+             * lines, unfortunately they're not adjacent so we can't quite use SIMD properly. */
             memcpy(g->cimgui.vertex.writeBuffer + frameVertexCount * IG_VERTEX_SIZE, cmds->VtxBuffer.Data,
                     cmds->VtxBuffer.Size * IG_VERTEX_SIZE);
             frameVertexCount += cmds->VtxBuffer.Size;

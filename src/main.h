@@ -11,5 +11,3 @@ typedef struct GlobalStorage_ {
     VulkanContext vulkan;
     CImgui cimgui;
 } GlobalStorage;
-
-static void render(GlobalStorage* g, VkCommandBuffer* cmd);

@@ -107,6 +107,8 @@ static void ext_vkDestroyTexture(
  */
 
 #define CIMGUI_KEYMAP_COUNT 105
+int                 glfwKey     [CIMGUI_KEYMAP_COUNT];
+ImGuiKey            imguiKey    [CIMGUI_KEYMAP_COUNT];
 
 typedef struct {
     VkDeviceSize index;
@@ -119,9 +121,6 @@ typedef struct CImgui_ {
 
     ImGuiMouseCursor    cursor;
     GLFWcursor*         cursorMap   [ImGuiMouseCursor_COUNT];
-    int                 glfwKey     [CIMGUI_KEYMAP_COUNT];
-    ImGuiKey            imguiKey    [CIMGUI_KEYMAP_COUNT];
-    char                keyDown     [CIMGUI_KEYMAP_COUNT];
 
     /* Vulkan Integration */
     VulkanTexture               fontTexture;
@@ -151,4 +150,9 @@ typedef struct CImgui_ {
 
 static const char* ext_cimguiGetClipboard(void* context);
 static void ext_cimguiSetClipboard(void* context, const char* text);
-static void ext_cimguiRenderToVulkan(GlobalStorage* g, VkCommandBuffer cmd, uint32_t index);
+
+static void ext_cimguiKeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+static void ext_cimguiCharacterCallback(GLFWwindow* window, unsigned codepoint);
+static void ext_cimguiMousePositionCallback(GLFWwindow* window, double x, double y);
+static void ext_cimguiMouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+static void ext_cimguiMouseWheelCallback(GLFWwindow* window, double x, double y);

@@ -393,13 +393,31 @@ ext_init(GlobalStorage* g)
         return 4;
     }
 
-    /* Uniform Descriptors
-     * FIXME The shaders don't actually have uniforms, do we even need this? */
+    /* Font */
+    unsigned char* pixels = 0;
+    int width, height;
+    ImFontAtlas_AddFontDefault(io->Fonts, 0);
+    ImFontAtlas_GetTexDataAsRGBA32(io->Fonts, &pixels, &width, &height, 0);
+
+    res = ext_vkCreateTexture(&g->vulkan, &g->cimgui.fontTexture, pixels, width, height);
+    if (res != VK_SUCCESS) {
+        return 2;
+    }
+    io->Fonts->TexID = &g->cimgui.fontTexture;
+
+    /* Descriptor Layout
+     * This is distinct from the DescriptorSets in that the DescriptorSetLayout is part of the Pipeline and
+     * so cannot be changed during rendering, but DescriptorSets are interchangeable and bound using
+     * draw commands.
+     * FIXME The shaders don't actually have uniforms, do we even need this? It might make more sense to just
+     * not use it at all. What we actually need are push constants for scale and translate
+     * FIXME It seems the sampler descriptor needs to be here too? Need two in an array then */
 
     VkDescriptorSetLayoutBinding descriptorSetLayoutBinding = {0};
-    descriptorSetLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorSetLayoutBinding.binding = 0;
+    descriptorSetLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorSetLayoutBinding.descriptorCount = 1;
-    descriptorSetLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    descriptorSetLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {0};
     descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -414,10 +432,18 @@ ext_init(GlobalStorage* g)
         return 5;
     }
 
+    VkPushConstantRange pushConstantRange = {0};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = 16;
+
+    /* Pipeline */
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {0};
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.setLayoutCount = 1;
     pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+    pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
 
     VkPipelineLayout pipelineLayout;
     res = vkCreatePipelineLayout(g->vulkan.device, &pipelineLayoutCreateInfo, 0, &pipelineLayout);
@@ -427,81 +453,6 @@ ext_init(GlobalStorage* g)
         return 6;
     }
 
-    { /* Font */
-        unsigned char* pixels = 0;
-        int width, height;
-        ImFontAtlas_AddFontDefault(io->Fonts, 0);
-        ImFontAtlas_GetTexDataAsRGBA32(io->Fonts, &pixels, &width, &height, 0);
-
-        res = ext_vkCreateTexture(&g->vulkan, &g->cimgui.fontTexture, pixels, width, height);
-        if (res != VK_SUCCESS) {
-            return 2;
-        }
-        io->Fonts->TexID = &g->cimgui.fontTexture;
-
-        /* Font Sampler */
-        VkSamplerCreateInfo samplerInfo = {0};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.minLod = -1000;
-        samplerInfo.maxLod = -1000;
-        samplerInfo.maxAnisotropy = 1.0f;
-        res = vkCreateSampler(g->vulkan.device, &samplerInfo, 0, &g->cimgui.fontSampler);
-        if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateSampler() failed for font texture, result code [%i]: %s\n",
-                    res, string_VkResult(res));
-            return 7;
-        }
-
-        VkDescriptorPoolSize poolSizeInfo = {0};
-        poolSizeInfo.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizeInfo.descriptorCount = 1;
-
-        VkDescriptorPoolCreateInfo poolCreateInfo = {0};
-        poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolCreateInfo.poolSizeCount = 1;
-        poolCreateInfo.pPoolSizes = &poolSizeInfo;
-        poolCreateInfo.maxSets = 1;
-
-        res = vkCreateDescriptorPool(g->vulkan.device, &poolCreateInfo, 0, &g->cimgui.fontDescriptorPool);
-        if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkCreateDescriptorPool() failed, result code [%i]: %s\n",
-                    res, string_VkResult(res));
-            return 8;
-        }
-
-        VkDescriptorSetAllocateInfo descriptorAlloc = {0};
-        descriptorAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        descriptorAlloc.descriptorPool = g->cimgui.fontDescriptorPool;
-        descriptorAlloc.descriptorSetCount = 1;
-        descriptorAlloc.pSetLayouts = &descriptorSetLayout;
-        res = vkAllocateDescriptorSets(g->vulkan.device, &descriptorAlloc, &g->cimgui.fontTexture.desc);
-        if (res != VK_SUCCESS) {
-            fprintf(stderr, "vkAllocateDescriptorSets() failed, result code [%i]: %s\n",
-                    res, string_VkResult(res));
-            return 9;
-        }
-
-        VkDescriptorImageInfo writeImageInfo = {0};
-        writeImageInfo.sampler = g->cimgui.fontSampler;
-        writeImageInfo.imageView = g->cimgui.fontTexture.view;
-        writeImageInfo.imageLayout = g->cimgui.fontTexture.layout;
-        VkWriteDescriptorSet writeInfo = {0};
-        writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeInfo.dstSet = g->cimgui.fontTexture.desc;
-        writeInfo.descriptorCount = 1;
-        writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writeInfo.dstBinding = 0;
-        writeInfo.pImageInfo = &writeImageInfo;
-        vkUpdateDescriptorSets(g->vulkan.device, 1, &writeInfo, 0, 0);
-    }
-
-    /* Pipeline */
     VkPipelineShaderStageCreateInfo shaderStage[2] = {0};
     shaderStage[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStage[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -538,7 +489,7 @@ ext_init(GlobalStorage* g)
     vertexInfo.pVertexAttributeDescriptions = attributes;
 
     VkPipelineInputAssemblyStateCreateInfo assembly = {0};
-    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
     VkPipelineViewportStateCreateInfo viewport = {0};
@@ -596,7 +547,7 @@ ext_init(GlobalStorage* g)
     createInfo.pDepthStencilState = &depth;
     createInfo.pColorBlendState = &blend;
     createInfo.pDynamicState = &dynamics;
-    createInfo.layout = g->vulkan.layout;
+    createInfo.layout = pipelineLayout;
     createInfo.renderPass = g->vulkan.renderpass;
     res = vkCreateGraphicsPipelines(g->vulkan.device, VK_NULL_HANDLE, 1, &createInfo, 0, &g->cimgui.pipeline);
     if (res != VK_SUCCESS) {
@@ -604,6 +555,69 @@ ext_init(GlobalStorage* g)
                 res, string_VkResult(res));
         return 10;
     }
+
+    { /* Font Sampler */
+        VkSamplerCreateInfo samplerInfo = {0};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.minLod = -1000;
+        samplerInfo.maxLod = -1000;
+        samplerInfo.maxAnisotropy = 1.0f;
+        res = vkCreateSampler(g->vulkan.device, &samplerInfo, 0, &g->cimgui.fontSampler);
+        if (res != VK_SUCCESS) {
+            fprintf(stderr, "vkCreateSampler() failed for font texture, result code [%i]: %s\n",
+                    res, string_VkResult(res));
+            return 7;
+        }
+
+        VkDescriptorPoolSize poolSizeInfo = {0};
+        poolSizeInfo.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizeInfo.descriptorCount = 1;
+
+        VkDescriptorPoolCreateInfo poolCreateInfo = {0};
+        poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolCreateInfo.poolSizeCount = 1;
+        poolCreateInfo.pPoolSizes = &poolSizeInfo;
+        poolCreateInfo.maxSets = 1;
+
+        res = vkCreateDescriptorPool(g->vulkan.device, &poolCreateInfo, 0, &g->cimgui.fontDescriptorPool);
+        if (res != VK_SUCCESS) {
+            fprintf(stderr, "vkCreateDescriptorPool() failed, result code [%i]: %s\n",
+                    res, string_VkResult(res));
+            return 8;
+        }
+
+        VkDescriptorSetAllocateInfo descriptorAlloc = {0};
+        descriptorAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        descriptorAlloc.descriptorPool = g->cimgui.fontDescriptorPool;
+        descriptorAlloc.descriptorSetCount = 1;
+        descriptorAlloc.pSetLayouts = &descriptorSetLayout;
+        res = vkAllocateDescriptorSets(g->vulkan.device, &descriptorAlloc, &g->cimgui.fontTexture.desc);
+        if (res != VK_SUCCESS) {
+            fprintf(stderr, "vkAllocateDescriptorSets() failed, result code [%i]: %s\n",
+                    res, string_VkResult(res));
+            return 9;
+        }
+
+        VkDescriptorImageInfo writeImageInfo = {0};
+        writeImageInfo.sampler = g->cimgui.fontSampler;
+        writeImageInfo.imageView = g->cimgui.fontTexture.view;
+        writeImageInfo.imageLayout = g->cimgui.fontTexture.layout;
+        VkWriteDescriptorSet writeInfo = {0};
+        writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeInfo.dstSet = g->cimgui.fontTexture.desc; // FIXME Error here
+        writeInfo.descriptorCount = 1;
+        writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writeInfo.dstBinding = 0;
+        writeInfo.pImageInfo = &writeImageInfo;
+        //vkUpdateDescriptorSets(g->vulkan.device, 1, &writeInfo, 0, 0);
+    }
+
 
     /* Create Vertex/Index/Uniform buffers, reallocation is largely discouraged so just preallocate a large
      * amount (A couple of MiB should do). */
@@ -754,11 +768,13 @@ ext_vkUpdateBuffer(VulkanContext* vulkan, void* data, VkDeviceSize size,
 
     memcpy(mapping, data, size);
     vkUnmapMemory(vulkan->device, *memory);
+    /* The memory is already bound to the buffer, no need to do it again.
     res = vkBindBufferMemory(vulkan->device, *buffer, *memory, 0);
     if (res != VK_SUCCESS) {
         fprintf(stderr, "vkBindBufferMemory() failed, result code [%i]: %s\n", res, string_VkResult(res));
         return res;
     }
+    */
 
     return res;
 }
@@ -940,15 +956,17 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
 
     res = ext_vkImageLayout(vulkan, texture->image, imageInfo.format,
                       VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    if (res != VK_SUCCESS)
+    if (res != VK_SUCCESS) {
         return res;
+    }
 
     ext_vkCopyBufferToImage(vulkan, buffer, texture->image, width, height);
 
     res = ext_vkImageLayout(vulkan, texture->image, imageInfo.format,
                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (res != VK_SUCCESS)
+    if (res != VK_SUCCESS) {
         return res;
+    }
 
     vkDestroyBuffer(vulkan->device, buffer, 0);
     vkFreeMemory(vulkan->device, memory, 0);
@@ -962,9 +980,10 @@ ext_vkCreateTexture(VulkanContext* vulkan, VulkanTexture* texture,
     viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.layerCount = 1;
     res = vkCreateImageView(vulkan->device, &viewInfo, 0, &texture->view);
-    if (res != VK_SUCCESS)
+    if (res != VK_SUCCESS) {
         fprintf(stderr, "Failed to create image view for texture\n");
         return res;
+    }
 
     return VK_SUCCESS;
 }

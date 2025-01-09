@@ -1219,14 +1219,16 @@ main(int argc, char* argv[])
 
     unsigned long long max64 = -1;
     double lastTime = glfwGetTime();
+    uint32_t index = 0;
 
-    while (!glfwWindowShouldClose(window)) {
+    uint32_t frame = 0;
+    while (!glfwWindowShouldClose(window)/* && frame++ < 3*/) {
         double currentTime = glfwGetTime();
         double deltaTime = currentTime - lastTime;
-        uint32_t index;
         bool demoOpen = true;
         ImGuiIO* io = igGetIO();
 
+        #if 0
         glfwPollEvents();
 
         io->DisplaySize.x = surfaceCapabilities.currentExtent.width;
@@ -1319,6 +1321,21 @@ main(int argc, char* argv[])
             fprintf(stderr, "Vertex data reupload failed\n");
             return 40;
         }
+        #endif
+
+        vk_result = vkWaitForFences(g->vulkan.device, 1, &fences[index], VK_TRUE, max64);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "vkWaitForFences() failed, result code [%i]: %s\n",
+                    vk_result, string_VkResult(vk_result));
+            return 42;
+        }
+
+        vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
+        if (vk_result != VK_SUCCESS) {
+            fprintf(stderr, "vkAcquireNextImage() failed, result code [%i]: %s\n",
+                    vk_result, string_VkResult(vk_result));
+            return 41;
+        }
 
         // Update Dancing Triangle
         vertexes[12] = sinf(currentTime);
@@ -1330,14 +1347,6 @@ main(int argc, char* argv[])
 
         // Render to CmdList
 
-        vk_result = vkAcquireNextImage(g->vulkan.device, swapchain, max64, semaPresent, 0, &index);
-        if (vk_result != VK_SUCCESS) {
-            fprintf(stderr, "vkAcquireNextImage() failed, result code [%i]: %s\n",
-                    vk_result, string_VkResult(vk_result));
-            return 41;
-        }
-
-        /* TODO Do we even need two alternating command buffers now? It doesn't seem like it matters */
         vk_result = vkBeginCommandBuffer(commandBuffers[index], &cmdInfo);
         if (vk_result != VK_SUCCESS) {
             fprintf(stderr, "vkBeginCommandBuffer() failed, result code [%i]: %s\n",
@@ -1351,9 +1360,9 @@ main(int argc, char* argv[])
         vkCmdSetViewport(commandBuffers[index], 0, 1, &viewport);
         vkCmdSetScissor(commandBuffers[index], 0, 1, scissor);
 
+        vkCmdBindPipeline(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         vkCmdBindDescriptorSets(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 g->vulkan.layout, 0, 1, &descriptorSet, 0, 0);
-        vkCmdBindPipeline(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commandBuffers[index], 0, 1, &data[0].buffer, &offset);
@@ -1365,17 +1374,23 @@ main(int argc, char* argv[])
         /* Now the CIMGUI commands, doesn't need a separate subpass because subpasses are only relevant
          * for color attachement changes (ie. framebuffers)
          * TODO Note that each command contains a TextureID field! Need to bind this properly
-         * TODO Does the actual texture get bound by the descriptor set as well? */
+         * TODO Does the actual texture get bound by the descriptor set as well?
+         * TODO Push Constants are scale and translate ops somewhere in the CImgui cmdlists*/
+        #if 0
+        vkCmdBindPipeline(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS, g->cimgui.pipeline);
         vkCmdBindDescriptorSets(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 g->vulkan.layout, 0, 1, &g->cimgui.fontTexture.desc, 0, 0);
-        vkCmdBindPipeline(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS, g->cimgui.pipeline);
         for (size_t cmdListIndex = 0; cmdListIndex < dd->CmdListsCount; cmdListIndex++) {
             vkCmdSetScissor(commandBuffers[index], 0, 1, &g->cimgui.calls[cmdListIndex].scissor);
+            vkCmdPushConstants(commandBuffers[index], /* TODO PipelineLayout? */,
+                                VK_SHADER_STAGE_VERTEX_BIT, 0, /* TODO sizeof(pushConstants) */,
+                                &pushConstants);
             vkCmdBindVertexBuffers(commandBuffers[index], 0, 1, &g->cimgui.vertex.buffer, &offset);
             vkCmdBindIndexBuffer(commandBuffers[index], g->cimgui.index.buffer, 0, VK_INDEX_TYPE_UINT16);
             vkCmdDrawIndexed(commandBuffers[index], g->cimgui.calls[cmdListIndex].indexCount,
                                 1, g->cimgui.calls[cmdListIndex].index, 0, 1);
         }
+        #endif
 
         vkCmdEndRenderPass(commandBuffers[index]);
         vk_result = vkEndCommandBuffer(commandBuffers[index]);

@@ -435,7 +435,7 @@ ext_init(GlobalStorage* g)
     VkPushConstantRange pushConstantRange = {0};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = 16;
+    pushConstantRange.size = sizeof(float) * 4;
 
     /* Pipeline */
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {0};
@@ -445,8 +445,7 @@ ext_init(GlobalStorage* g)
     pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
     pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
 
-    VkPipelineLayout pipelineLayout;
-    res = vkCreatePipelineLayout(g->vulkan.device, &pipelineLayoutCreateInfo, 0, &pipelineLayout);
+    res = vkCreatePipelineLayout(g->vulkan.device, &pipelineLayoutCreateInfo, 0, &g->cimgui.pipelineLayout);
     if (res != VK_SUCCESS) {
         fprintf(stderr, "vkCreatePipelineLayout() failed, result code [%i]: %s\n",
                 res, string_VkResult(res));
@@ -547,7 +546,7 @@ ext_init(GlobalStorage* g)
     createInfo.pDepthStencilState = &depth;
     createInfo.pColorBlendState = &blend;
     createInfo.pDynamicState = &dynamics;
-    createInfo.layout = pipelineLayout;
+    createInfo.layout = g->cimgui.pipelineLayout;
     createInfo.renderPass = g->vulkan.renderpass;
     res = vkCreateGraphicsPipelines(g->vulkan.device, VK_NULL_HANDLE, 1, &createInfo, 0, &g->cimgui.pipeline);
     if (res != VK_SUCCESS) {
@@ -615,7 +614,7 @@ ext_init(GlobalStorage* g)
         writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writeInfo.dstBinding = 0;
         writeInfo.pImageInfo = &writeImageInfo;
-        //vkUpdateDescriptorSets(g->vulkan.device, 1, &writeInfo, 0, 0);
+        vkUpdateDescriptorSets(g->vulkan.device, 1, &writeInfo, 0, 0);
     }
 
 
@@ -624,7 +623,7 @@ ext_init(GlobalStorage* g)
     g->cimgui.vertex.size = BIG_PAGE * IG_VERTEX_SIZE;
     g->cimgui.index.size = BIG_PAGE * IG_INDEX_SIZE;
     g->cimgui.uniform.size = SMALL_PAGE;
-    g->cimgui.callsSize = sizeof(*g->cimgui.calls) * SMALL_PAGE;
+    g->cimgui.callsSize = sizeof(*g->cimgui.calls) * BIG_PAGE;
 
     g->cimgui.vertex.writeBuffer = malloc(g->cimgui.vertex.size);
     memset(g->cimgui.vertex.writeBuffer, 0, g->cimgui.vertex.size);

@@ -1228,7 +1228,6 @@ main(int argc, char* argv[])
         bool demoOpen = true;
         ImGuiIO* io = igGetIO();
 
-        #if 0
         glfwPollEvents();
 
         io->DisplaySize.x = surfaceCapabilities.currentExtent.width;
@@ -1244,34 +1243,36 @@ main(int argc, char* argv[])
 
         VkDeviceSize frameVertexCount = 0;
         VkDeviceSize frameIndexCount = 0;
+        size_t frameDrawCallCount = 0;
         ImDrawData* dd = igGetDrawData();
         ImDrawList* cmds;
         ImDrawCmd* cmd;
 
         // Doing a bunch of size checks first, probably not necessary every frame
 
-        if (dd->CmdListsCount > SMALL_PAGE) {
+        if (dd->CmdListsCount > BIG_PAGE) {
             fprintf(stderr, "Too many DearImgui drawcalls: %i, capacity for only %i\n",
-                    dd->CmdListsCount, SMALL_PAGE);
+                    dd->CmdListsCount, BIG_PAGE);
             return 40;
         }
 
         for (size_t cmdListIndex = 0; cmdListIndex < dd->CmdListsCount; cmdListIndex++) {
             cmds = dd->CmdLists[cmdListIndex];
             frameVertexCount += cmds->VtxBuffer.Size;
-            g->cimgui.calls[cmdListIndex].index = frameIndexCount;
-            float minx = (cmd->ClipRect.x - dd->DisplayPos.x) * io->DisplayFramebufferScale.x;
-            float miny = (cmd->ClipRect.y - dd->DisplayPos.y) * io->DisplayFramebufferScale.y;
-            float maxx = (cmd->ClipRect.z - dd->DisplayPos.x) * io->DisplayFramebufferScale.x;
-            float maxy = (cmd->ClipRect.w - dd->DisplayPos.y) * io->DisplayFramebufferScale.y;
-            g->cimgui.calls[cmdListIndex].scissor.offset.x = minx;
-            g->cimgui.calls[cmdListIndex].scissor.offset.y = miny;
-            g->cimgui.calls[cmdListIndex].scissor.extent.width = maxx - minx;
-            g->cimgui.calls[cmdListIndex].scissor.extent.height = maxy - miny;
             for (int cmdIndex = 0; cmdIndex < cmds->CmdBuffer.Size; cmdIndex++) {
                 cmd = cmds->CmdBuffer.Data + cmdIndex;
+                float minx = (cmd->ClipRect.x - dd->DisplayPos.x) * io->DisplayFramebufferScale.x;
+                float miny = (cmd->ClipRect.y - dd->DisplayPos.y) * io->DisplayFramebufferScale.y;
+                float maxx = (cmd->ClipRect.z - dd->DisplayPos.x) * io->DisplayFramebufferScale.x;
+                float maxy = (cmd->ClipRect.w - dd->DisplayPos.y) * io->DisplayFramebufferScale.y;
+                g->cimgui.calls[frameDrawCallCount].scissor.offset.x = minx;
+                g->cimgui.calls[frameDrawCallCount].scissor.offset.y = miny;
+                g->cimgui.calls[frameDrawCallCount].scissor.extent.width = maxx - minx;
+                g->cimgui.calls[frameDrawCallCount].scissor.extent.height = maxy - miny;
+                g->cimgui.calls[frameDrawCallCount].index = frameIndexCount;
+                g->cimgui.calls[frameDrawCallCount].indexCount = cmd->ElemCount;
+                frameDrawCallCount++;
                 frameIndexCount += cmd->ElemCount;
-                g->cimgui.calls[cmdListIndex].indexCount += cmd->ElemCount;
             }
         }
 
@@ -1321,7 +1322,6 @@ main(int argc, char* argv[])
             fprintf(stderr, "Vertex data reupload failed\n");
             return 40;
         }
-        #endif
 
         vk_result = vkWaitForFences(g->vulkan.device, 1, &fences[index], VK_TRUE, max64);
         if (vk_result != VK_SUCCESS) {
@@ -1374,23 +1374,30 @@ main(int argc, char* argv[])
         /* Now the CIMGUI commands, doesn't need a separate subpass because subpasses are only relevant
          * for color attachement changes (ie. framebuffers)
          * TODO Note that each command contains a TextureID field! Need to bind this properly
-         * TODO Does the actual texture get bound by the descriptor set as well?
-         * TODO Push Constants are scale and translate ops somewhere in the CImgui cmdlists*/
-        #if 0
+         * TODO Does the actual texture get bound by the descriptor set as well? */
         vkCmdBindPipeline(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS, g->cimgui.pipeline);
         vkCmdBindDescriptorSets(commandBuffers[index], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                g->vulkan.layout, 0, 1, &g->cimgui.fontTexture.desc, 0, 0);
-        for (size_t cmdListIndex = 0; cmdListIndex < dd->CmdListsCount; cmdListIndex++) {
+                                g->cimgui.pipelineLayout, 0, 1, &g->cimgui.fontTexture.desc, 0, 0);
+        for (size_t cmdListIndex = 0; cmdListIndex < frameDrawCallCount; cmdListIndex++) {
             vkCmdSetScissor(commandBuffers[index], 0, 1, &g->cimgui.calls[cmdListIndex].scissor);
-            vkCmdPushConstants(commandBuffers[index], /* TODO PipelineLayout? */,
-                                VK_SHADER_STAGE_VERTEX_BIT, 0, /* TODO sizeof(pushConstants) */,
-                                &pushConstants);
+
+            float scale[2];
+            scale[0] = 2.0f / dd->DisplaySize.x;
+            scale[1] = 2.0f / dd->DisplaySize.y;
+            vkCmdPushConstants(commandBuffers[index], g->cimgui.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                                sizeof(float) * 0, sizeof(float) * 2, scale);
+
+            float translate[2];
+            translate[0] = -1.0f - dd->DisplayPos.x * scale[0];
+            translate[1] = -1.0f - dd->DisplayPos.y * scale[1];
+            vkCmdPushConstants(commandBuffers[index], g->cimgui.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                                sizeof(float) * 2, sizeof(float) * 2, translate);
+
             vkCmdBindVertexBuffers(commandBuffers[index], 0, 1, &g->cimgui.vertex.buffer, &offset);
             vkCmdBindIndexBuffer(commandBuffers[index], g->cimgui.index.buffer, 0, VK_INDEX_TYPE_UINT16);
             vkCmdDrawIndexed(commandBuffers[index], g->cimgui.calls[cmdListIndex].indexCount,
                                 1, g->cimgui.calls[cmdListIndex].index, 0, 1);
         }
-        #endif
 
         vkCmdEndRenderPass(commandBuffers[index]);
         vk_result = vkEndCommandBuffer(commandBuffers[index]);

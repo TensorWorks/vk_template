@@ -113,7 +113,7 @@ ImGuiKey            imguiKey    [CIMGUI_KEYMAP_COUNT];
 typedef struct {
     VkDeviceSize index;
     VkDeviceSize indexCount;
-    VkRect2D scissor;
+    VkRect2D scissor; // FIXME Scissor needs to be applied per triangle
 } CImguiDrawCall;
 
 typedef struct CImgui_ {
@@ -127,6 +127,7 @@ typedef struct CImgui_ {
     VkSampler                   fontSampler;
     VkDescriptorPool            fontDescriptorPool;
     VkPipeline                  pipeline;
+    VkPipelineLayout            pipelineLayout;
     struct {
         VkBuffer        buffer;
         VkDeviceMemory  memory;
